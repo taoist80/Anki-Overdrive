@@ -1,0 +1,18 @@
+{
+  "name": "overdrive-backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Self-hosted revival of the Anki Overdrive account + profile-sync backend (accounts.api.anki.com / ankival.api.anki.com)",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "capture:dump": "node src/dump-capture.js"
+  },
+  "dependencies": {
+    "@fastify/swagger": "^9.4.0",
+    "@fastify/swagger-ui": "^5.2.0",
+    "better-sqlite3": "^11.8.0",
+    "fastify": "^5.2.0"
+  }
+}

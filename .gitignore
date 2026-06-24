@@ -1,0 +1,29 @@
+# Large binaries — sourced from archive.org, not version-controlled
+*.xapk
+*.apk
+*.obb
+*.zip
+
+# Decompiled / rebuilt / extracted artifacts (derived from the APK — not committed)
+*-decompiled/
+*-jadx/
+*-bundle/
+obb-extract/
+*-patched*.apk
+*-aligned.apk
+*-signed.apk
+build/
+dist/
+
+# Signing material — NEVER commit
+*.keystore
+*.jks
+keystore.properties
+
+# OS / tooling
+.DS_Store
+.idea/
+*.log
+
+# Reverse-engineering artifacts (regenerable from Ghidra)
+re/
