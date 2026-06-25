@@ -64,6 +64,8 @@ class RaceEngine(private val mgr: CarManager) {
         const val LANE_LIMIT = 68f      // mm max offset from centerline
         const val LANE_H_SPEED = 400    // mm/s horizontal during a lane change
         const val CONTROL_MS = 250L     // re-send cadence for target speeds
+        const val FINISH_PIECE_ID = 33  // the unique start/finish piece ('B', isFinishLine) from tracks.json
+        const val LANE_HEAL_MM = 12f    // re-send a lane change if the car is >this far from its target
     }
 
     var state by mutableStateOf(RaceState())
@@ -72,10 +74,10 @@ class RaceEngine(private val mgr: CarManager) {
     private val main = Handler(Looper.getMainLooper())
     private val tele = LinkedHashMap<String, CarTelemetry>()
     private val targetSpeed = HashMap<String, Int>()
-    private val firstPiece = HashMap<String, Int>()  // each car's lap marker (piece at race start)
     private val lastPiece = HashMap<String, Int>()
     private var startedAt = 0L
     private var playerAddr: String? = null
+    private var designatedPlayer: String? = null
 
     init {
         mgr.onPosition = ::onPosition
@@ -85,11 +87,15 @@ class RaceEngine(private val mgr: CarManager) {
 
     val playerAddress: String? get() = playerAddr
 
-    /** Snapshot connected cars into the race; the first is the player's. Call before [start]. */
+    /** Choose which connected car is the player's (P1). Falls back to first-connected if unset. */
+    fun setPlayer(address: String?) { designatedPlayer = address }
+
+    /** Snapshot connected cars into the race; the designated (or first) car is the player's. */
     fun arm(mode: String) {
         val connected = mgr.connectedCars()
-        playerAddr = connected.firstOrNull()?.address
-        tele.clear(); targetSpeed.clear(); firstPiece.clear(); lastPiece.clear()
+        playerAddr = designatedPlayer?.takeIf { a -> connected.any { it.address == a } }
+            ?: connected.firstOrNull()?.address
+        tele.clear(); targetSpeed.clear(); lastPiece.clear()
         connected.forEach { c ->
             tele[c.address] = CarTelemetry(c.address, c.name, isPlayer = c.address == playerAddr, modelId = c.modelId)
         }
@@ -150,11 +156,16 @@ class RaceEngine(private val mgr: CarManager) {
         override fun run() {
             if (!state.running) return
             tele.keys.forEach { addr ->
-                if (tele[addr]?.offTrack == true) {
+                val t = tele[addr]
+                if (t?.offTrack == true) {
                     mgr.drive(addr, 0)   // car is off the track — hold it stopped until it re-localizes
                 } else {
-                    val s = effectiveSpeed(addr, tele[addr]?.roadPieceId ?: -1)
+                    val s = effectiveSpeed(addr, t?.roadPieceId ?: -1)
                     if (s > 0) mgr.drive(addr, s, ACCEL)
+                    // Lane self-heal: changeLane is one-shot, so re-apply the target if a write dropped.
+                    if (t != null && kotlin.math.abs(t.offsetMm - t.targetOffsetMm) > LANE_HEAL_MM) {
+                        mgr.changeLane(addr, t.targetOffsetMm, hSpeed = LANE_H_SPEED, hAccel = ACCEL)
+                    }
                 }
             }
             publish()
@@ -178,10 +189,9 @@ class RaceEngine(private val mgr: CarManager) {
         var laps = t.laps
 
         if (newPiece >= 0 && newPiece != prev) {
-            when {
-                !firstPiece.containsKey(addr) -> firstPiece[addr] = newPiece          // race-start marker
-                newPiece == firstPiece[addr] && prev != -1 -> laps += 1               // crossed start again
-            }
+            // Lap = crossing the unique finish-line piece (id 33). Piece ids repeat around a track,
+            // so counting "return to first-seen id" over-counts — only the finish piece is singular.
+            if (newPiece == FINISH_PIECE_ID && prev != -1) laps += 1
             lastPiece[addr] = newPiece
             if (state.running) mgr.drive(addr, effectiveSpeed(addr, newPiece), ACCEL) // react to curve immediately
         }

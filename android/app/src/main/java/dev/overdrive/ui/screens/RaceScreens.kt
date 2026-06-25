@@ -28,6 +28,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -130,6 +131,7 @@ fun MatchSetupScreen(nav: OverdriveNav, mode: String, campaignMissionId: String)
     val mgr = remember { AnkiCarManagerHolder.require() }
     val engine = remember { RaceEngineHolder.engine }
     remember { GameData.load(ctx); 0 }
+    var playerAddr by remember { mutableStateOf<String?>(null) }
 
     OverdriveScaffold(title = "Match Setup", onBack = { nav.back() }) { mod ->
         Column(mod, verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -142,18 +144,25 @@ fun MatchSetupScreen(nav: OverdriveNav, mode: String, campaignMissionId: String)
                 fontFamily = font, color = colors.textDim, fontSize = 13.sp,
             )
 
-            // Connected cars
+            // Connected cars — tap one to make it your car (P1)
             val connected = mgr.cars.filter { it.state != CarState.Disconnected }
+            val effectivePlayer = playerAddr ?: connected.firstOrNull()?.address
             if (connected.isNotEmpty()) {
-                Text("CONNECTED", fontFamily = font, color = colors.gold, fontSize = 12.sp, letterSpacing = 2.sp)
-                connected.forEachIndexed { i, c ->
-                    OverdrivePanel(Modifier.fillMaxWidth()) { inner ->
+                Text("CONNECTED  ·  tap to set your car (P1)", fontFamily = font, color = colors.gold, fontSize = 12.sp, letterSpacing = 1.sp)
+                connected.forEach { c ->
+                    val isPlayer = c.address == effectivePlayer
+                    val shape = RoundedCornerShape(8.dp)
+                    OverdrivePanel(
+                        Modifier.fillMaxWidth()
+                            .then(if (isPlayer) Modifier.border(2.dp, colors.gold, shape) else Modifier)
+                            .clickable { playerAddr = c.address },
+                    ) { inner ->
                         Row(inner.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 CarThumb(c.modelId)
                                 Spacer(Modifier.size(12.dp))
                                 Column {
-                                    Text((if (i == 0) "P1 · " else "AI · ") + carName(c.modelId, c.name), fontFamily = font, color = colors.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                    Text((if (isPlayer) "P1 · " else "AI · ") + carName(c.modelId, c.name), fontFamily = font, color = if (isPlayer) colors.gold else colors.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                     Text("${c.state}  ·  ${c.address.takeLast(5)}", fontFamily = font, color = colors.textDim, fontSize = 11.sp)
                                 }
                             }
@@ -189,6 +198,7 @@ fun MatchSetupScreen(nav: OverdriveNav, mode: String, campaignMissionId: String)
             PrimaryButton(
                 "Scan Track",
                 {
+                    engine.setPlayer(effectivePlayer)
                     engine.arm(mode)
                     nav.go(Routes.TrackScan)
                 },
