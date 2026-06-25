@@ -43,6 +43,7 @@ import dev.overdrive.CarState
 import dev.overdrive.data.ContentRepository
 import dev.overdrive.game.campaign.CampaignEngine
 import dev.overdrive.game.race.RaceEngineHolder
+import dev.overdrive.game.race.RoadPieces
 import dev.overdrive.nav.Overlay
 import dev.overdrive.nav.OverdriveNav
 import dev.overdrive.nav.Routes
@@ -187,18 +188,21 @@ fun MatchSetupScreen(nav: OverdriveNav, mode: String, campaignMissionId: String)
 
 @Composable
 fun TrackScanScreen(nav: OverdriveNav) = WireframeScreen(
-    title = "Scan Track",
+    title = "Ready Up",
     onBack = { nav.back() },
-    subtitle = "Drive a car around the track once to map its segments. The mapped layout renders here. " +
-        "Full track model wires in Phase 3.",
+    subtitle = "Place the cars on the track and confirm. Curve slowdown and lap counting are now " +
+        "automatic (the engine reads each road piece live), so no manual scan is needed — a full " +
+        "visual track map is a later refinement.",
     actions = listOf(NavAction("Ready — Countdown", { nav.go(Routes.Countdown) }, ButtonAccent.Gold)),
 )
 
 @Composable
 fun CountdownScreen(nav: OverdriveNav) {
+    val ctx = LocalContext.current
     val colors = OverdriveTheme.colors
     val font = OverdriveTheme.font
     val engine = remember { RaceEngineHolder.engine }
+    remember { RoadPieces.load(ctx); 0 }   // ensure curve map is ready before driving
     OverdriveBackground(heroImage = null) {
         Column(
             Modifier.fillMaxSize().padding(28.dp),
@@ -228,8 +232,8 @@ fun InRaceHudScreen(nav: OverdriveNav) {
         Column(Modifier.fillMaxSize().padding(20.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 HudStat("POS", ordinal(rank))
-                HudStat("SPEED", "${player?.speedMmPerSec ?: 0}")
-                HudStat("SEG", "${player?.transitions ?: 0}")
+                HudStat("LAP", "${player?.laps ?: 0}")
+                HudStat("SPEED", "${player?.speedMmPerSec ?: 0}${if (player?.onCurve == true) "↘" else ""}")
                 HudStat("TIME", formatTime(st.elapsedMs))
                 Box(
                     Modifier.clip(RoundedCornerShape(6.dp)).background(colors.danger.copy(alpha = 0.85f))
