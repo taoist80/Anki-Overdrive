@@ -163,7 +163,9 @@ class RaceEngine(private val mgr: CarManager) {
                     val s = effectiveSpeed(addr, t?.roadPieceId ?: -1)
                     if (s > 0) mgr.drive(addr, s, ACCEL)
                     // Lane self-heal: changeLane is one-shot, so re-apply the target if a write dropped.
-                    if (t != null && kotlin.math.abs(t.offsetMm - t.targetOffsetMm) > LANE_HEAL_MM) {
+                    // Only on straights — re-applying mid-curve (where offset readings fluctuate) can
+                    // fight the car and cause spin-outs.
+                    if (t != null && !t.onCurve && kotlin.math.abs(t.offsetMm - t.targetOffsetMm) > LANE_HEAL_MM) {
                         mgr.changeLane(addr, t.targetOffsetMm, hSpeed = LANE_H_SPEED, hAccel = ACCEL)
                     }
                 }
@@ -173,11 +175,15 @@ class RaceEngine(private val mgr: CarManager) {
         }
     }
 
-    /** A car reported 0x2b (left the track): stop it and flag it until 0x27 shows it re-localized. */
+    /**
+     * A car reported 0x2b (left the track). The car spams this continuously while off, so we always
+     * re-assert stop but only flag/log/recompose once on the off→on-track transition.
+     */
     private fun onDelocalized(addr: String) {
         val t = tele[addr] ?: return
-        tele[addr] = t.copy(offTrack = true, speedMmPerSec = 0)
         mgr.drive(addr, 0)
+        if (t.offTrack) return   // already flagged — ignore the repeats
+        tele[addr] = t.copy(offTrack = true, speedMmPerSec = 0)
         Log.i(TAG, "Race.delocalized: $addr OFF TRACK")
         publish()
     }
