@@ -1,5 +1,6 @@
 package dev.overdrive.ui.screens
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -33,6 +34,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -40,7 +42,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.overdrive.AnkiCarManagerHolder
 import dev.overdrive.CarState
+import dev.overdrive.GameData
 import dev.overdrive.data.ContentRepository
+import dev.overdrive.ui.theme.rememberAsset
 import dev.overdrive.game.campaign.CampaignEngine
 import dev.overdrive.game.race.RaceEngineHolder
 import dev.overdrive.game.race.RoadPieces
@@ -120,10 +124,12 @@ fun VehicleSelectScreen(nav: OverdriveNav) = WireframeScreen(
 /** Real BLE: scan, connect cars (up to 4), then arm the race engine. */
 @Composable
 fun MatchSetupScreen(nav: OverdriveNav, mode: String, campaignMissionId: String) {
+    val ctx = LocalContext.current
     val colors = OverdriveTheme.colors
     val font = OverdriveTheme.font
     val mgr = remember { AnkiCarManagerHolder.require() }
     val engine = remember { RaceEngineHolder.engine }
+    remember { GameData.load(ctx); 0 }
 
     OverdriveScaffold(title = "Match Setup", onBack = { nav.back() }) { mod ->
         Column(mod, verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -143,9 +149,13 @@ fun MatchSetupScreen(nav: OverdriveNav, mode: String, campaignMissionId: String)
                 connected.forEachIndexed { i, c ->
                     OverdrivePanel(Modifier.fillMaxWidth()) { inner ->
                         Row(inner.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                            Column {
-                                Text((if (i == 0) "P1 · " else "AI · ") + c.name, fontFamily = font, color = colors.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                                Text("${c.state}", fontFamily = font, color = colors.textDim, fontSize = 11.sp)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                CarThumb(c.modelId)
+                                Spacer(Modifier.size(12.dp))
+                                Column {
+                                    Text((if (i == 0) "P1 · " else "AI · ") + carName(c.modelId, c.name), fontFamily = font, color = colors.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                    Text("${c.state}  ·  ${c.address.takeLast(5)}", fontFamily = font, color = colors.textDim, fontSize = 11.sp)
+                                }
                             }
                             val dot = if (c.state == CarState.Connected) colors.success else colors.gold
                             Box(Modifier.size(12.dp).clip(CircleShape).background(dot))
@@ -162,11 +172,15 @@ fun MatchSetupScreen(nav: OverdriveNav, mode: String, campaignMissionId: String)
             mgr.found.forEach { d ->
                 OverdrivePanel(Modifier.fillMaxWidth().clickable { mgr.connect(d) }) { inner ->
                     Row(inner.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                        Column {
-                            Text(d.name, fontFamily = font, color = colors.textPrimary, fontSize = 15.sp)
-                            Text(d.address, fontFamily = font, color = colors.textDim, fontSize = 11.sp)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CarThumb(d.modelId)
+                            Spacer(Modifier.size(12.dp))
+                            Column {
+                                Text(carName(d.modelId, d.name), fontFamily = font, color = colors.textPrimary, fontSize = 15.sp)
+                                Text(d.address, fontFamily = font, color = colors.textDim, fontSize = 11.sp)
+                            }
                         }
-                        Text("${d.rssi} dBm  ·  TAP TO CONNECT", fontFamily = font, color = colors.blue, fontSize = 12.sp)
+                        Text("${d.rssi} dBm  ·  TAP", fontFamily = font, color = colors.blue, fontSize = 12.sp)
                     }
                 }
             }
@@ -254,8 +268,12 @@ fun InRaceHudScreen(nav: OverdriveNav) {
                         Text("LIVE TELEMETRY (0x27)", fontFamily = font, color = colors.textDim, fontSize = 11.sp, letterSpacing = 2.sp)
                         st.standings.forEachIndexed { i, c ->
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("${i + 1}. ${if (c.isPlayer) "▸ " else ""}${c.name}", fontFamily = font, color = if (c.isPlayer) colors.gold else colors.textPrimary, fontSize = 14.sp)
-                                Text("seg ${c.transitions}  ·  pc ${c.roadPieceId}  ·  off ${c.offsetMm.toInt()}/${c.targetOffsetMm.toInt()}mm  ·  ${c.speedMmPerSec} mm/s", fontFamily = font, color = colors.textDim, fontSize = 12.sp)
+                                Text("${i + 1}. ${if (c.isPlayer) "▸ " else ""}${carName(c.modelId, c.name)}", fontFamily = font, color = if (c.isPlayer) colors.gold else colors.textPrimary, fontSize = 14.sp)
+                                Text(
+                                    if (c.offTrack) "OFF TRACK"
+                                    else "lap ${c.laps}  ·  seg ${c.transitions}  ·  ${c.speedMmPerSec} mm/s${if (c.onCurve) " ↘" else ""}",
+                                    fontFamily = font, color = if (c.offTrack) colors.danger else colors.textDim, fontSize = 12.sp,
+                                )
                             }
                         }
                     }
@@ -364,8 +382,8 @@ fun RaceResultsScreen(nav: OverdriveNav, campaignMissionId: String) {
                 standings.forEachIndexed { i, c ->
                     OverdrivePanel(Modifier.fillMaxWidth()) { inner ->
                         Row(inner.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text("${ordinal(i + 1)}   ${if (c.isPlayer) "▸ " else ""}${c.name}", fontFamily = font, color = if (c.isPlayer) colors.gold else colors.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                            Text("${c.transitions} segments", fontFamily = font, color = colors.textDim, fontSize = 12.sp)
+                            Text("${ordinal(i + 1)}   ${if (c.isPlayer) "▸ " else ""}${carName(c.modelId, c.name)}", fontFamily = font, color = if (c.isPlayer) colors.gold else colors.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                            Text("${c.laps} laps · ${c.transitions} seg", fontFamily = font, color = colors.textDim, fontSize = 12.sp)
                         }
                     }
                 }
@@ -380,6 +398,20 @@ fun RaceResultsScreen(nav: OverdriveNav, campaignMissionId: String) {
         }
     }
 }
+
+@Composable
+private fun CarThumb(modelId: Int) {
+    val car = remember(modelId) { GameData.byModelId(modelId) }
+    val sprite = rememberAsset(car?.spriteFile?.let { "cars/$it" })
+    val colors = OverdriveTheme.colors
+    Box(Modifier.size(width = 72.dp, height = 40.dp), contentAlignment = Alignment.Center) {
+        if (sprite != null) Image(sprite, car?.name, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+        else Box(Modifier.size(36.dp).clip(RoundedCornerShape(6.dp)).background(colors.barEmpty))
+    }
+}
+
+private fun carName(modelId: Int, fallback: String): String =
+    GameData.byModelId(modelId)?.name ?: fallback
 
 private fun ordinal(n: Int): String = when (n) {
     1 -> "1st"; 2 -> "2nd"; 3 -> "3rd"; else -> "${n}th"

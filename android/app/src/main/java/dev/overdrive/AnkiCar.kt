@@ -31,11 +31,15 @@ enum class Prio(val v: Int, val label: String) {
     LOW(BluetoothGatt.CONNECTION_PRIORITY_LOW_POWER, "LOW ~100ms+"),
 }
 
-data class FoundDevice(val name: String, val address: String, val rssi: Int, val device: BluetoothDevice)
+data class FoundDevice(
+    val name: String, val address: String, val rssi: Int, val device: BluetoothDevice,
+    val modelId: Int = -1,
+)
 
 data class CarInfo(
     val address: String, val name: String, val state: CarState,
     val lastStatus: Int = -1, val uptimeS: Long = 0, val drops: Int = 0,
+    val modelId: Int = -1,
 )
 
 /** Decodes the BluetoothGattCallback status (= the HCI disconnect reason surfaced to the app). */
@@ -71,6 +75,7 @@ class CarManager(private val context: Context) {
     /** Telemetry hooks for the RaceEngine. Invoked on the main thread. */
     var onPosition: ((address: String, pos: Protocol.Position) -> Unit)? = null
     var onTransition: ((address: String) -> Unit)? = null
+    var onDelocalized: ((address: String) -> Unit)? = null
 
     init {
         // periodic refresh so per-car uptime ticks in the UI
@@ -103,11 +108,22 @@ class CarManager(private val context: Context) {
             val d = r.device; val rec = r.scanRecord
             val anki = rec?.serviceUuids?.any { it.uuid == Protocol.SERVICE } == true
             val nm = d.name ?: rec?.deviceName
+            // Anki cars broadcast their model in the manufacturer data: [product_id, model_id, ...].
+            var modelId = -1
+            var rawMfg = ""
+            val mfg = rec?.manufacturerSpecificData
+            if (mfg != null) {
+                for (i in 0 until mfg.size()) {
+                    val bytes = mfg.valueAt(i) ?: continue
+                    rawMfg += "[cid=${mfg.keyAt(i)} ${bytes.joinToString(" ") { "%02x".format(it) }}]"
+                    if (modelId < 0) modelId = Protocol.modelIdFromMfg(bytes)
+                }
+            }
             main.post {
-                if (seen.add(d.address)) log("seen ${nm ?: "?"} ${d.address} ${r.rssi}dBm anki=$anki")
+                if (seen.add(d.address)) log("seen ${nm ?: "?"} ${d.address} ${r.rssi}dBm anki=$anki model=$modelId mfg=$rawMfg")
                 val looks = anki || nm?.contains("Drive", true) == true || nm?.contains("Anki", true) == true
                 if (looks && found.none { it.address == d.address } && !conns.containsKey(d.address))
-                    found.add(FoundDevice(nm ?: "Anki car", d.address, r.rssi, d))
+                    found.add(FoundDevice(nm ?: "Anki car", d.address, r.rssi, d, modelId))
             }
         }
         override fun onScanFailed(e: Int) = log("Scan failed: $e")
@@ -117,7 +133,7 @@ class CarManager(private val context: Context) {
         if (conns.size >= maxCars) { log("Max $maxCars cars connected"); return }
         stopScan()
         found.removeAll { it.address == d.address }
-        conns[d.address] = CarConn(d.device, d.name).also { it.connect() }
+        conns[d.address] = CarConn(d.device, d.name, d.modelId).also { it.connect() }
         refresh()
     }
 
@@ -142,7 +158,7 @@ class CarManager(private val context: Context) {
         conns[address]?.offsetCmd(offsetMm) ?: Unit
 
     @SuppressLint("MissingPermission")
-    inner class CarConn(val device: BluetoothDevice, val name: String) {
+    inner class CarConn(val device: BluetoothDevice, val name: String, val modelId: Int = -1) {
         private var gatt: BluetoothGatt? = null
         private var writeChar: BluetoothGattCharacteristic? = null
         private var state = CarState.Connecting
@@ -155,7 +171,7 @@ class CarManager(private val context: Context) {
         fun info(): CarInfo {
             val up = if (state == CarState.Connected && connectedAt > 0)
                 (SystemClock.elapsedRealtime() - connectedAt) / 1000 else 0
-            return CarInfo(device.address, name, state, lastStatus, up, drops)
+            return CarInfo(device.address, name, state, lastStatus, up, drops, modelId)
         }
 
         fun connect() {
@@ -228,6 +244,8 @@ class CarManager(private val context: Context) {
                     Protocol.parsePosition(v)?.let { p -> main.post { onPosition?.invoke(device.address, p) } }
                 Protocol.MSG_LOCALIZATION_TRANSITION ->
                     main.post { onTransition?.invoke(device.address) }
+                Protocol.MSG_VEHICLE_DELOCALIZED ->
+                    main.post { onDelocalized?.invoke(device.address) }
             }
         }
 

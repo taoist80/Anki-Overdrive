@@ -16,12 +16,14 @@ data class CarTelemetry(
     val address: String,
     val name: String,
     val isPlayer: Boolean,
+    val modelId: Int = -1,
     val speedMmPerSec: Int = 0,
     val roadPieceId: Int = -1,
     val locationId: Int = -1,
     val offsetMm: Float = 0f,
     val targetOffsetMm: Float = 0f,
     val onCurve: Boolean = false,
+    val offTrack: Boolean = false,
     val transitions: Int = 0,
     val laps: Int = 0,
     val lastUpdateMs: Long = 0L,
@@ -78,6 +80,7 @@ class RaceEngine(private val mgr: CarManager) {
     init {
         mgr.onPosition = ::onPosition
         mgr.onTransition = ::onTransition
+        mgr.onDelocalized = ::onDelocalized
     }
 
     val playerAddress: String? get() = playerAddr
@@ -88,7 +91,7 @@ class RaceEngine(private val mgr: CarManager) {
         playerAddr = connected.firstOrNull()?.address
         tele.clear(); targetSpeed.clear(); firstPiece.clear(); lastPiece.clear()
         connected.forEach { c ->
-            tele[c.address] = CarTelemetry(c.address, c.name, isPlayer = c.address == playerAddr)
+            tele[c.address] = CarTelemetry(c.address, c.name, isPlayer = c.address == playerAddr, modelId = c.modelId)
         }
         startedAt = 0L
         Log.i(TAG, "Race.arm: ${connected.size} cars [${connected.joinToString { it.name }}], player=$playerAddr")
@@ -147,12 +150,25 @@ class RaceEngine(private val mgr: CarManager) {
         override fun run() {
             if (!state.running) return
             tele.keys.forEach { addr ->
-                val s = effectiveSpeed(addr, tele[addr]?.roadPieceId ?: -1)
-                if (s > 0) mgr.drive(addr, s, ACCEL)
+                if (tele[addr]?.offTrack == true) {
+                    mgr.drive(addr, 0)   // car is off the track — hold it stopped until it re-localizes
+                } else {
+                    val s = effectiveSpeed(addr, tele[addr]?.roadPieceId ?: -1)
+                    if (s > 0) mgr.drive(addr, s, ACCEL)
+                }
             }
             publish()
             main.postDelayed(this, CONTROL_MS)
         }
+    }
+
+    /** A car reported 0x2b (left the track): stop it and flag it until 0x27 shows it re-localized. */
+    private fun onDelocalized(addr: String) {
+        val t = tele[addr] ?: return
+        tele[addr] = t.copy(offTrack = true, speedMmPerSec = 0)
+        mgr.drive(addr, 0)
+        Log.i(TAG, "Race.delocalized: $addr OFF TRACK")
+        publish()
     }
 
     private fun onPosition(addr: String, p: Protocol.Position) {
@@ -169,6 +185,8 @@ class RaceEngine(private val mgr: CarManager) {
             lastPiece[addr] = newPiece
             if (state.running) mgr.drive(addr, effectiveSpeed(addr, newPiece), ACCEL) // react to curve immediately
         }
+        // Any position update means the car is on the track again — clear off-track + resume.
+        if (t.offTrack && state.running) mgr.drive(addr, effectiveSpeed(addr, newPiece), ACCEL)
 
         tele[addr] = t.copy(
             speedMmPerSec = p.speedMmPerSec,
@@ -176,6 +194,7 @@ class RaceEngine(private val mgr: CarManager) {
             locationId = p.locationId,
             offsetMm = p.offsetMm,
             onCurve = RoadPieces.isCurve(newPiece),
+            offTrack = false,
             laps = laps,
             lastUpdateMs = SystemClock.elapsedRealtime(),
         )

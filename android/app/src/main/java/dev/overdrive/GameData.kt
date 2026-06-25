@@ -46,6 +46,9 @@ object GameData {
         }
         cars = out.sortedBy { it.id }
     }
+
+    /** Resolve a car by its Anki model id (as broadcast in the BLE advertisement). */
+    fun byModelId(modelId: Int): CarType? = cars.firstOrNull { it.id == modelId }
 }
 
 private fun JSONObject.optStringOrNull(key: String): String? =

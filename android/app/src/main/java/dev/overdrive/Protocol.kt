@@ -33,6 +33,8 @@ object Protocol {
     const val MSG_BATTERY_RESPONSE = 0x1b
     const val MSG_LOCALIZATION_POSITION = 0x27
     const val MSG_LOCALIZATION_TRANSITION = 0x29
+    const val MSG_LOCALIZATION_INTERSECTION = 0x2a
+    const val MSG_VEHICLE_DELOCALIZED = 0x2b   // car has left the track (off-track)
 
     private const val SDK_OPTION_OVERRIDE_LOCALIZATION = 0x01
 
@@ -90,4 +92,12 @@ object Protocol {
 
     fun u16le(d: ByteArray, at: Int): Int =
         if (d.size > at + 1) ((d[at + 1].toInt() and 0xff) shl 8) or (d[at].toInt() and 0xff) else -1
+
+    /**
+     * Anki vehicle advertisement manufacturer data layout: [product_id, model_id, _reserved,
+     * identifier_lo, identifier_hi]. model_id maps to vehicleTypes.json `id` (the car model).
+     * Returns -1 if the data is too short.
+     */
+    fun modelIdFromMfg(data: ByteArray?): Int =
+        if (data != null && data.size >= 2) data[1].toInt() and 0xff else -1
 }
