@@ -8,6 +8,7 @@ import dev.overdrive.data.model.Commander
 import dev.overdrive.data.model.GameMode
 import dev.overdrive.data.model.GameModeDisplayFile
 import dev.overdrive.data.model.Mission
+import dev.overdrive.data.model.RawStarChallenge
 import kotlinx.serialization.json.Json
 
 /**
@@ -32,6 +33,8 @@ object ContentRepository {
     var missionsById: Map<String, Mission> = emptyMap()
         private set
     var commandersById: Map<String, Commander> = emptyMap()
+        private set
+    var starChallengesById: Map<String, RawStarChallenge> = emptyMap()
         private set
 
     val cars: List<CarType> get() = GameData.cars
@@ -64,6 +67,8 @@ object ContentRepository {
         missionsById = missions.associateBy { it.id }
         val commanders: List<Commander> = json.decodeFromString(read(ctx, "gamedata/commanders.json"))
         commandersById = commanders.associateBy { it.id }
+        val challenges: List<RawStarChallenge> = json.decodeFromString(read(ctx, "gamedata/star_challenges.json"))
+        starChallengesById = challenges.associateBy { it.id }
 
         loaded = true
     }

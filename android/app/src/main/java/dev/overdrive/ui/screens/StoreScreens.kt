@@ -1,8 +1,11 @@
 package dev.overdrive.ui.screens
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
 import dev.overdrive.nav.OverdriveNav
 import dev.overdrive.nav.Routes
+import dev.overdrive.profile.ProfileRepository
 import dev.overdrive.ui.components.ButtonAccent
 import dev.overdrive.ui.components.CoinPill
 import dev.overdrive.ui.components.NavAction
@@ -34,10 +37,15 @@ fun StoreCheckoutOptionsScreen(nav: OverdriveNav) = WireframeScreen(
 )
 
 @Composable
-fun CoinShopScreen(nav: OverdriveNav) = WireframeScreen(
-    title = "Coin Shop",
-    onBack = { nav.back() },
-    subtitle = "Buy in-game coins. Balance updates against the local economy service.",
-    body = { CoinPill(0, OverdriveTheme.font) },
-    actions = listOf(NavAction("Get 1,000 Coins", { nav.back() }, ButtonAccent.Gold)),
-)
+fun CoinShopScreen(nav: OverdriveNav) {
+    val ctx = LocalContext.current
+    remember { ProfileRepository.load(ctx); 0 }
+    val profile = ProfileRepository.profile
+    WireframeScreen(
+        title = "Coin Shop",
+        onBack = { nav.back() },
+        subtitle = "Buy in-game coins. Balance persists locally (and syncs to the backend in Phase 4).",
+        body = { CoinPill(profile.coins, OverdriveTheme.font) },
+        actions = listOf(NavAction("Get 1,000 Coins", { ProfileRepository.addCoins(ctx, 1000) }, ButtonAccent.Gold)),
+    )
+}

@@ -64,4 +64,20 @@ data class Commander(
     val tier: Int = 0,
     val number: Int = 0,
     @SerialName("vehicle_level") val vehicleLevel: Int = 0,
+    @SerialName("1_star_unlock_id") val star1Id: String = "",
+    @SerialName("2_star_unlock_id") val star2Id: String = "",
+    @SerialName("3_star_unlock_id") val star3Id: String = "",
+) {
+    val starUnlockIds: List<String> get() = listOf(star1Id, star2Id, star3Id).filter { it.isNotBlank() }
+}
+
+/** characters/star_challenges.json — a campaign star objective (the directed task for a star). */
+@Serializable
+data class RawStarChallenge(
+    val id: String = "",
+    val rule: String = "",
+    @SerialName("param1") val param1: String = "",
+    val description: String = "",
+    @SerialName("reward_points") val rewardPoints: String = "0",
+    @SerialName("loot_drop") val lootDrop: String = "",
 )

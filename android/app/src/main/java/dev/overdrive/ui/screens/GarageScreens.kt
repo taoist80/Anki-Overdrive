@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.sp
 import dev.overdrive.GameData
 import dev.overdrive.nav.OverdriveNav
 import dev.overdrive.nav.Routes
+import dev.overdrive.profile.ProfileRepository
 import dev.overdrive.ui.components.ButtonAccent
 import dev.overdrive.ui.components.CarHero
 import dev.overdrive.ui.components.CoinPill
@@ -34,13 +35,14 @@ fun GarageHomeScreen(nav: OverdriveNav) {
     val ctx = LocalContext.current
     val colors = OverdriveTheme.colors
     val font = OverdriveTheme.font
-    remember { GameData.load(ctx); 0 }
+    remember { GameData.load(ctx); ProfileRepository.load(ctx); 0 }
     val cars = GameData.cars
+    val coins = ProfileRepository.profile.coins
 
     OverdriveScaffold(
         title = "Garage",
         onBack = { nav.back() },
-        right = { CoinPill(0, font) },
+        right = { CoinPill(coins, font) },
     ) { mod ->
         Column(mod) {
             if (cars.isEmpty()) {

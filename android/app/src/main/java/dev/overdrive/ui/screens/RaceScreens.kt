@@ -17,6 +17,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Slider
@@ -39,6 +41,7 @@ import androidx.compose.ui.unit.sp
 import dev.overdrive.AnkiCarManagerHolder
 import dev.overdrive.CarState
 import dev.overdrive.data.ContentRepository
+import dev.overdrive.game.campaign.CampaignEngine
 import dev.overdrive.game.race.RaceEngineHolder
 import dev.overdrive.nav.Overlay
 import dev.overdrive.nav.OverdriveNav
@@ -50,6 +53,7 @@ import dev.overdrive.ui.components.OverdriveBackground
 import dev.overdrive.ui.components.OverdrivePanel
 import dev.overdrive.ui.components.OverdriveScaffold
 import dev.overdrive.ui.components.PrimaryButton
+import dev.overdrive.ui.components.StarRow
 import dev.overdrive.ui.components.WireframeScreen
 import dev.overdrive.ui.theme.OverdriveTheme
 
@@ -315,14 +319,40 @@ fun GameOverScreen(nav: OverdriveNav) {
 
 @Composable
 fun RaceResultsScreen(nav: OverdriveNav, campaignMissionId: String) {
+    val ctx = LocalContext.current
     val colors = OverdriveTheme.colors
     val font = OverdriveTheme.font
     val engine = remember { RaceEngineHolder.engine }
     val standings = engine.state.standings
     val isCampaign = campaignMissionId.isNotBlank()
+    // Evaluate + award campaign stars exactly once for this result.
+    val summary = remember(campaignMissionId) {
+        if (isCampaign) CampaignEngine.completeMission(ctx, campaignMissionId, engine.state) else null
+    }
 
-    OverdriveScaffold(title = if (isCampaign) "Mission Complete" else "Results", onBack = { nav.back() }, heroImage = null) { mod ->
-        Column(mod, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    OverdriveScaffold(
+        title = when {
+            !isCampaign -> "Results"
+            summary?.won == true -> "Mission Complete"
+            else -> "Mission Failed"
+        },
+        onBack = { nav.back() }, heroImage = null,
+    ) { mod ->
+        Column(mod.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (summary != null) {
+                OverdrivePanel(Modifier.fillMaxWidth()) { inner ->
+                    Column(inner, horizontalAlignment = Alignment.CenterHorizontally) {
+                        StarRow(earned = summary.totalStarsForMission, size = 30)
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            if (summary.newStars.isEmpty()) "No new stars this run"
+                            else "+${summary.newStars.size}★  ·  +${summary.coinsAwarded} coins",
+                            fontFamily = font, color = colors.gold, fontSize = 14.sp, fontWeight = FontWeight.Bold,
+                        )
+                        summary.newStars.forEach { Text("• ${it.description}", fontFamily = font, color = colors.textDim, fontSize = 12.sp) }
+                    }
+                }
+            }
             if (standings.isEmpty()) {
                 Text("No race data.", fontFamily = font, color = colors.textDim)
             } else {

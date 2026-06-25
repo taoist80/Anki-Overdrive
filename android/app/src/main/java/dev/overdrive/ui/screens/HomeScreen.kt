@@ -17,13 +17,16 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.overdrive.nav.OverdriveNav
 import dev.overdrive.nav.Routes
+import dev.overdrive.profile.ProfileRepository
 import dev.overdrive.ui.components.ButtonAccent
 import dev.overdrive.ui.components.CoinPill
 import dev.overdrive.ui.components.OverdriveBackground
@@ -33,6 +36,9 @@ import dev.overdrive.ui.theme.OverdriveTheme
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun HomeScreen(nav: OverdriveNav) {
+    val ctx = LocalContext.current
+    remember { ProfileRepository.load(ctx); 0 }
+    val profile = ProfileRepository.profile
     val colors = OverdriveTheme.colors
     val font = OverdriveTheme.font
     OverdriveBackground {
@@ -41,12 +47,12 @@ fun HomeScreen(nav: OverdriveNav) {
             // Top chrome: profile chip (left) + coin balance (right)
             Box(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp)) {
                 Text(
-                    "DRIVER 01",
+                    profile.driverName.uppercase(),
                     fontFamily = font, color = colors.textDim, fontSize = 14.sp, letterSpacing = 1.sp,
                     modifier = Modifier.align(Alignment.CenterStart).clickable { nav.go(Routes.ProfileGraph) },
                 )
                 Box(Modifier.align(Alignment.CenterEnd).clickable { nav.go(Routes.CoinShop) }) {
-                    CoinPill(amount = 0, font = font)
+                    CoinPill(amount = profile.coins, font = font)
                 }
             }
 
