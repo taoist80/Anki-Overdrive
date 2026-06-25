@@ -218,7 +218,7 @@ fun InRaceHudScreen(nav: OverdriveNav) {
     val st = engine.state
     val player = st.cars.firstOrNull { it.isPlayer }
     val rank = st.standings.indexOfFirst { it.isPlayer }.let { if (it >= 0) it + 1 else 1 }
-    var throttle by remember { mutableFloatStateOf(0.6f) }
+    var throttle by remember { mutableFloatStateOf(0.7f) }   // ~500 mm/s of 700 max at start
 
     OverdriveBackground(heroImage = null) {
         Column(Modifier.fillMaxSize().padding(20.dp)) {

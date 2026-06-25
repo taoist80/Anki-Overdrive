@@ -53,10 +53,14 @@ class RaceEngine(private val mgr: CarManager) {
 
     companion object {
         private const val TAG = "OverdriveX"
-        const val MAX_SPEED = 1000      // mm/s at full throttle
-        const val PLAYER_START = 600    // mm/s default when the race starts
-        const val AI_SPEED = 560        // mm/s for AI rivals
-        const val ACCEL = 1500          // mm/s^2
+        // Cars fishtail through bends above ~700 mm/s on a curvy track. Until the track model lets
+        // us slow for curves per-segment (Phase 3), cap full throttle to a controllable speed and
+        // keep acceleration gentle to avoid traction loss on speed changes.
+        const val MAX_SPEED = 700       // mm/s at full throttle (controllable on bends)
+        const val PLAYER_START = 500    // mm/s default when the race starts
+        const val AI_BASE = 440         // mm/s base for AI rivals (varied per car below)
+        const val AI_SPREAD = 40        // mm/s step between AI rivals so it's a real race
+        const val ACCEL = 1000          // mm/s^2 (gentle — reduces fishtail on speed changes)
         const val LANE_STEP = 44f       // mm per lane nudge (a clear, visible jump)
         const val LANE_LIMIT = 68f      // mm max offset from centerline
         const val LANE_H_SPEED = 400    // mm/s horizontal during a lane change
@@ -97,8 +101,10 @@ class RaceEngine(private val mgr: CarManager) {
     fun start() {
         arm(state.mode)   // re-snapshot connected cars: include any that finished connecting after Match Setup
         startedAt = SystemClock.elapsedRealtime()
+        var aiIdx = 0
         tele.keys.forEach { addr ->
-            targetSpeed[addr] = if (addr == playerAddr) PLAYER_START else AI_SPEED
+            targetSpeed[addr] = if (addr == playerAddr) PLAYER_START
+                else (AI_BASE + (aiIdx++ % 4) * AI_SPREAD)   // 440/480/520/560 — a spread field
             mgr.setLaneOffset(addr, 0f)
         }
         Log.i(TAG, "Race.start: driving ${tele.size} cars, targets=$targetSpeed")
