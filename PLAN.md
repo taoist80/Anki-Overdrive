@@ -22,6 +22,39 @@ Two tracks:
 
 ---
 
+## ⚠ BLOCKER — target device is 64-bit-only (confirmed 2026-06-25)
+
+The Tab S10+ (`SM-X820`, Android **16** / SDK 36) is **64-bit-only**: `ro.product.cpu.abilist =
+arm64-v8a` only, `abilist32` empty, no 32-bit `/system/bin/linker`. All three game apps ship
+**`armeabi-v7a` (32-bit) native libs only** → `adb install` → `INSTALL_FAILED_NO_MATCHING_ABIS`.
+**No amount of APK patching makes the 32-bit original run on this tablet** (its Unity/Mono/
+`libDriveEngine` native engine is 32-bit and can't be recompiled without source). Track 1 as
+written is therefore void *for this device*. Forward options (pending user decision):
+1. Find a 64-bit build of the game (probably none exists — Anki/DDL shipped 32-bit only).
+2. Run the patched original (+ revived backend) on an older **pre-2024 32-bit-capable** device.
+3. Build a new **arm64** app driving the cars over the documented BLE protocol (OpenOverdrive-style).
+Recon + backend-revival work still applies to options 1 and 2.
+
+## Current direction (decided 2026-06-25): native arm64 app — `android/` (OverdriveX)
+
+User chose option 3 (no older 32-bit device available; must be the Tab S10+). We build a new
+**native Kotlin** app (`android/`, Jetpack Compose + Android BLE, arm64) that drives the cars
+over the documented BLE protocol, and integrates with the revived profile backend (`server/`).
+
+What carries over: the **BLE protocol** (GATT UUIDs pulled from the original binary —
+`be15beef/bee1/bee0`; message layouts from Anki drive-sdk) and the **profile backend** work.
+What's void for this device: the smali patching / "run the original APK" path (Track 1).
+
+Milestones:
+1. **BLE PoC (current):** scan → connect → SDK mode → drive one car (speed + lane) + telemetry.
+   This validates BLE-to-cars works on the Tab S10+ / Android 16. See `android/README.md`.
+2. Telemetry + track mapping; multiple cars.
+3. Game modes / UI.
+4. Profiles synced to `server/` (the revived account/profile API).
+
+Toolchain (installed 2026-06-25): JDK 17 (`/usr/local/opt/openjdk@17`), Gradle 8.9 (wrapper),
+AGP 8.6.1, Kotlin 2.0.20, Android SDK platform 35 + build-tools 35.
+
 ## Status (as of this session)
 
 - [x] Toolchain: `apktool` 3.0.1, `jadx`, `adb` present. **Android SDK build-tools 34.0.0
