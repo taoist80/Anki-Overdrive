@@ -247,7 +247,7 @@ fun InRaceHudScreen(nav: OverdriveNav) {
                         st.standings.forEachIndexed { i, c ->
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text("${i + 1}. ${if (c.isPlayer) "▸ " else ""}${c.name}", fontFamily = font, color = if (c.isPlayer) colors.gold else colors.textPrimary, fontSize = 14.sp)
-                                Text("seg ${c.transitions}  ·  piece ${c.roadPieceId}  ·  ${c.speedMmPerSec} mm/s", fontFamily = font, color = colors.textDim, fontSize = 12.sp)
+                                Text("seg ${c.transitions}  ·  pc ${c.roadPieceId}  ·  off ${c.offsetMm.toInt()}/${c.targetOffsetMm.toInt()}mm  ·  ${c.speedMmPerSec} mm/s", fontFamily = font, color = colors.textDim, fontSize = 12.sp)
                             }
                         }
                     }

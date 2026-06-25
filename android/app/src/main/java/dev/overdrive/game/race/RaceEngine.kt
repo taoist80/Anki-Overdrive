@@ -3,6 +3,7 @@ package dev.overdrive.game.race
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -41,18 +42,25 @@ data class RaceState(
  * position + 0x29 transition notifications. The player's car (first connected) is driven from the
  * HUD; other connected cars run a simple constant-speed AI so a physical race has rivals.
  *
+ * Robustness: setSpeed is re-sent on a control loop (~250 ms) for every armed car, because BLE
+ * writes-without-response can be dropped — a single initial command sometimes never reaches a car
+ * (this is why AI cars could sit still). Continuous sending mirrors the original game.
+ *
  * Lap detection is approximate for now (segment-transition proxy) — it tightens in Phase 3 once the
  * track is scanned and the start/finish piece is known.
  */
 class RaceEngine(private val mgr: CarManager) {
 
     companion object {
+        private const val TAG = "OverdriveX"
         const val MAX_SPEED = 1000      // mm/s at full throttle
         const val PLAYER_START = 600    // mm/s default when the race starts
         const val AI_SPEED = 560        // mm/s for AI rivals
-        const val ACCEL = 1200          // mm/s^2
-        const val LANE_STEP = 23f       // mm per lane nudge
+        const val ACCEL = 1500          // mm/s^2
+        const val LANE_STEP = 44f       // mm per lane nudge (a clear, visible jump)
         const val LANE_LIMIT = 68f      // mm max offset from centerline
+        const val LANE_H_SPEED = 400    // mm/s horizontal during a lane change
+        const val CONTROL_MS = 250L     // re-send cadence for target speeds
         const val SEGMENTS_PER_LAP = 0  // 0 = unknown until track scan (Phase 3)
     }
 
@@ -61,6 +69,7 @@ class RaceEngine(private val mgr: CarManager) {
 
     private val main = Handler(Looper.getMainLooper())
     private val tele = LinkedHashMap<String, CarTelemetry>()
+    private val targetSpeed = HashMap<String, Int>()
     private var startedAt = 0L
     private var playerAddr: String? = null
 
@@ -76,35 +85,42 @@ class RaceEngine(private val mgr: CarManager) {
         val connected = mgr.connectedCars()
         playerAddr = connected.firstOrNull()?.address
         tele.clear()
+        targetSpeed.clear()
         connected.forEach { c ->
             tele[c.address] = CarTelemetry(c.address, c.name, isPlayer = c.address == playerAddr)
         }
         startedAt = 0L
+        Log.i(TAG, "Race.arm: ${connected.size} cars [${connected.joinToString { it.name }}], player=$playerAddr")
         publish(mode = mode, running = false)
     }
 
     fun start() {
-        if (tele.isEmpty()) arm(state.mode)
+        arm(state.mode)   // re-snapshot connected cars: include any that finished connecting after Match Setup
         startedAt = SystemClock.elapsedRealtime()
         tele.keys.forEach { addr ->
+            targetSpeed[addr] = if (addr == playerAddr) PLAYER_START else AI_SPEED
             mgr.setLaneOffset(addr, 0f)
-            mgr.drive(addr, if (addr == playerAddr) PLAYER_START else AI_SPEED, ACCEL)
         }
+        Log.i(TAG, "Race.start: driving ${tele.size} cars, targets=$targetSpeed")
         publish(running = true)
-        main.removeCallbacks(tick)
-        main.post(tick)
+        main.removeCallbacks(control)
+        main.post(control)
     }
 
     fun stop() {
+        targetSpeed.clear()
         tele.keys.forEach { mgr.drive(it, 0) }
-        main.removeCallbacks(tick)
+        main.removeCallbacks(control)
+        Log.i(TAG, "Race.stop")
         publish(running = false)
     }
 
     /** HUD throttle: 0f..1f -> mm/s for the player's car. */
     fun setThrottle(fraction: Float) {
         val addr = playerAddr ?: return
-        mgr.drive(addr, (fraction.coerceIn(0f, 1f) * MAX_SPEED).toInt(), ACCEL)
+        val speed = (fraction.coerceIn(0f, 1f) * MAX_SPEED).toInt()
+        targetSpeed[addr] = speed
+        mgr.drive(addr, speed, ACCEL)
     }
 
     /** HUD lane buttons: shift the player's target offset by [deltaSteps] lane steps. */
@@ -113,18 +129,21 @@ class RaceEngine(private val mgr: CarManager) {
         val cur = tele[addr]?.targetOffsetMm ?: 0f
         val next = (cur + deltaSteps * LANE_STEP).coerceIn(-LANE_LIMIT, LANE_LIMIT)
         tele[addr]?.let { tele[addr] = it.copy(targetOffsetMm = next) }
-        mgr.changeLane(addr, next)
+        mgr.changeLane(addr, next, hSpeed = LANE_H_SPEED, hAccel = ACCEL)
+        Log.i(TAG, "Race.nudgeLane: $addr -> ${next}mm")
         publish()
     }
 
     /** HUD weapon button — wired to the item/weapon system in Phase 4. */
     fun fireWeapon() { /* no-op until items exist */ }
 
-    private val tick = object : Runnable {
+    /** Control loop: re-send each car's target speed so a dropped write can't leave a car stalled. */
+    private val control = object : Runnable {
         override fun run() {
             if (!state.running) return
-            publish()                       // refresh elapsed time
-            main.postDelayed(this, 200)
+            targetSpeed.forEach { (addr, speed) -> if (speed > 0) mgr.drive(addr, speed, ACCEL) }
+            publish()   // refresh elapsed time
+            main.postDelayed(this, CONTROL_MS)
         }
     }
 
