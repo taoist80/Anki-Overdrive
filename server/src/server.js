@@ -1,123 +1,120 @@
-// Self-hosted Anki Overdrive backend — capture-first scaffold.
+// OverdriveX backend — clean custom API (we own client + server, so no Anki-protocol emulation).
 //
-// Phase A2 (capture): point the app here (via the HttpAdapter redirect patch). Every request is
-//   logged to the capture_log table + console. Then refine the modeled routes below to match.
-// Phase A3 (emulate): flesh out /accounts and /ankival from the captured shapes.
+// Responsibilities: accounts (signup/login/session), profile sync (the authoritative store of
+// progression — coins/xp/stars/inventory/upgrades), and a store catalog. The reward economy runs
+// client-side; the backend persists + syncs the profile blob and resolves auth.
 //
-// Endpoint names mirror the native ServerConfig map: accounts, ankival, store, itemshop,
-// virtualrewards. We mount under a per-service path prefix (the redirect maps
-//   https://accounts.api.anki.com/1/...  ->  http://<server>/accounts/1/...).
+// Run: npm start  (PORT env, default 8080). Reach from the tablet via `adb reverse tcp:8080 tcp:8080`.
+// The earlier Anki-protocol capture scaffold lives in git history (pre-Phase-4).
 
 import Fastify from 'fastify';
-import { randomUUID, createHash } from 'node:crypto';
+import { randomUUID, randomBytes, scryptSync, timingSafeEqual, createHash } from 'node:crypto';
 import { db } from './db.js';
 
 const HOST = process.env.HOST || '0.0.0.0';
 const PORT = Number(process.env.PORT || 8080);
 
-const app = Fastify({ logger: true, bodyLimit: 8 * 1024 * 1024 });
-
-// Capture raw bodies for ANY content type (JSON, form, or binary CLAD blobs).
-app.addContentTypeParser('*', { parseAs: 'string' }, (_req, body, done) => done(null, body));
-
-const insertCapture = db.prepare(
-  'INSERT INTO capture_log (method, path, headers, body) VALUES (?,?,?,?)'
-);
-
-// Log every request — this is the capture mechanism.
-app.addHook('preHandler', async (req) => {
-  try {
-    const body = typeof req.body === 'string' ? req.body : JSON.stringify(req.body ?? null);
-    insertCapture.run(req.method, req.url, JSON.stringify(req.headers), body);
-    req.log.info({ anki: true, method: req.method, url: req.url, body }, 'CAPTURE');
-  } catch (e) {
-    req.log.warn(e, 'capture failed');
-  }
-});
+const app = Fastify({ logger: true, bodyLimit: 4 * 1024 * 1024 });
 
 // ---------- helpers ----------
-const etagOf = (s) => createHash('sha1').update(s).digest('hex');
-const newToken = () => randomUUID().replace(/-/g, '');
+const newId = () => randomUUID();
+const newToken = () => randomBytes(24).toString('hex');
 
-// AccountUpdatedCallback fields (from CLAD). Exact JSON keys TBD from capture.
-function accountView(a, token) {
-  return {
-    user_id: a.user_id,
-    profile_id: a.profile_id,
-    username: a.username,
-    email: a.email,
-    email_verified: !!a.email_verified,
-    status: a.status,
-    date_of_birth: a.date_of_birth,
-    session_token: token ?? null,
-    is_app_out_of_date: false,
-  };
+function hashPassword(password) {
+  const salt = randomBytes(16).toString('hex');
+  return `${salt}:${scryptSync(password, salt, 32).toString('hex')}`;
+}
+function verifyPassword(password, stored) {
+  const [salt, hash] = (stored || '').split(':');
+  if (!salt || !hash) return false;
+  const check = scryptSync(password, salt, 32).toString('hex');
+  const a = Buffer.from(hash), b = Buffer.from(check);
+  return a.length === b.length && timingSafeEqual(a, b);
 }
 
-// ---------- ACCOUNTS service (accounts.api.anki.com/1/) ----------
-// NOTE: paths + payloads are placeholders until capture confirms them.
-app.post('/accounts/1/accounts', async (req, reply) => {
-  const b = safeJson(req.body) ?? {};
-  const userId = randomUUID();
-  const profileId = randomUUID();
-  db.prepare(
-    `INSERT INTO accounts (user_id, profile_id, username, email, password_hash, status, date_of_birth)
-     VALUES (?,?,?,?,?, 'active', ?)`
-  ).run(userId, profileId, b.username ?? null, b.email ?? null, b.password ? etagOf(b.password) : null, b.dob ?? null);
-  const token = newToken();
-  db.prepare('INSERT INTO sessions (token, user_id) VALUES (?,?)').run(token, userId);
-  return reply.code(201).send(accountView(db.prepare('SELECT * FROM accounts WHERE user_id=?').get(userId), token));
-});
+const DEFAULT_PROFILE = { driverName: 'Driver 01', coins: 0, xp: 0, missions: {} };
 
-app.post('/accounts/1/sessions', async (req, reply) => {
-  // login -> issue session token. Refine matching logic after capture.
-  const b = safeJson(req.body) ?? {};
-  const a = db.prepare('SELECT * FROM accounts WHERE username=? OR email=?').get(b.username ?? '', b.username ?? '');
-  if (!a) return reply.code(401).send({ error: 'no_such_account' });
-  const token = newToken();
-  db.prepare('INSERT INTO sessions (token, user_id) VALUES (?,?)').run(token, a.user_id);
-  return accountView(a, token);
-});
-
-app.get('/accounts/1/accounts/:id', async (req) => {
-  const a = db.prepare('SELECT * FROM accounts WHERE user_id=? OR profile_id=?').get(req.params.id, req.params.id);
-  return a ? accountView(a) : {};
-});
-
-// ---------- ANKIVAL key-value profile store (ankival.api.anki.com/1/) ----------
-app.get('/ankival/1/*', async (req) => {
-  const userId = userFromAuth(req);
-  const key = req.params['*'];
-  const row = db.prepare('SELECT value, etag, version FROM profile_kv WHERE user_id=? AND key=?').get(userId, key);
-  return row ?? {};
-});
-
-app.put('/ankival/1/*', async (req, reply) => {
-  const userId = userFromAuth(req);
-  const key = req.params['*'];
-  const value = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
-  const etag = etagOf(value);
-  db.prepare(
-    `INSERT INTO profile_kv (user_id, key, value, etag, version) VALUES (?,?,?,?,1)
-     ON CONFLICT(user_id, key) DO UPDATE SET value=excluded.value, etag=excluded.etag,
-       version=profile_kv.version+1, updated_at=datetime('now')`
-  ).run(userId, key, value, etag);
-  return reply.header('etag', etag).code(200).send({ etag });
-});
-
-// ---------- catch-all: capture anything we haven't modeled yet, return 200 ----------
-app.setNotFoundHandler((req, reply) => {
-  req.log.warn({ url: req.url }, 'UNMODELED endpoint — captured; add a route after inspecting capture_log');
-  reply.code(200).send({});
-});
-
-function safeJson(s) { try { return typeof s === 'string' ? JSON.parse(s) : s; } catch { return null; } }
-function userFromAuth(req) {
-  const tok = (req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
-  const s = tok && db.prepare('SELECT user_id FROM sessions WHERE token=?').get(tok);
-  return s ? s.user_id : 'anonymous';
+function authUser(req, reply) {
+  const h = req.headers.authorization || '';
+  const token = h.startsWith('Bearer ') ? h.slice(7) : null;
+  if (!token) { reply.code(401).send({ error: 'missing bearer token' }); return null; }
+  const s = db.prepare('SELECT user_id FROM sessions WHERE token = ?').get(token);
+  if (!s) { reply.code(401).send({ error: 'invalid token' }); return null; }
+  return s.user_id;
 }
+
+function readProfile(userId) {
+  const row = db.prepare('SELECT value, version FROM profile_kv WHERE user_id = ? AND key = ?')
+    .get(userId, 'profile');
+  return row ? { profile: JSON.parse(row.value), version: row.version }
+             : { profile: DEFAULT_PROFILE, version: 0 };
+}
+const writeProfile = db.prepare(`
+  INSERT INTO profile_kv (user_id, key, value, etag, version, updated_at)
+  VALUES (@userId, 'profile', @value, @etag, @version, datetime('now'))
+  ON CONFLICT(user_id, key) DO UPDATE SET
+    value = excluded.value, etag = excluded.etag, version = excluded.version, updated_at = excluded.updated_at
+`);
+function saveProfile(userId, profile) {
+  const cur = db.prepare('SELECT version FROM profile_kv WHERE user_id = ? AND key = ?').get(userId, 'profile');
+  const version = (cur?.version || 0) + 1;
+  const value = JSON.stringify(profile);
+  writeProfile.run({ userId, value, etag: createHash('sha1').update(value).digest('hex'), version });
+  return version;
+}
+
+// ---------- routes ----------
+app.get('/health', async () => ({ ok: true, service: 'overdrivex-backend', time: new Date().toISOString() }));
+
+app.post('/api/v1/signup', async (req, reply) => {
+  const { username, password, email, driverName } = req.body || {};
+  if (!username || !password) return reply.code(400).send({ error: 'username and password required' });
+  if (db.prepare('SELECT 1 FROM accounts WHERE username = ?').get(username))
+    return reply.code(409).send({ error: 'username taken' });
+
+  const userId = newId();
+  db.prepare('INSERT INTO accounts (user_id, profile_id, username, email, password_hash) VALUES (?,?,?,?,?)')
+    .run(userId, newId(), username, email || null, hashPassword(password));
+  const profile = { ...DEFAULT_PROFILE, driverName: driverName || username };
+  const version = saveProfile(userId, profile);
+  const token = newToken();
+  db.prepare('INSERT INTO sessions (token, user_id) VALUES (?, ?)').run(token, userId);
+  return { userId, token, profile, version };
+});
+
+app.post('/api/v1/login', async (req, reply) => {
+  const { username, password } = req.body || {};
+  const acct = db.prepare('SELECT * FROM accounts WHERE username = ?').get(username);
+  if (!acct || !verifyPassword(password, acct.password_hash))
+    return reply.code(401).send({ error: 'invalid credentials' });
+  const token = newToken();
+  db.prepare('INSERT INTO sessions (token, user_id) VALUES (?, ?)').run(token, acct.user_id);
+  const { profile, version } = readProfile(acct.user_id);
+  return { userId: acct.user_id, token, profile, version };
+});
+
+app.get('/api/v1/profile', async (req, reply) => {
+  const userId = authUser(req, reply); if (!userId) return;
+  return readProfile(userId);
+});
+
+// Sync the local profile up. Last-write-wins; returns the stored version.
+app.put('/api/v1/profile', async (req, reply) => {
+  const userId = authUser(req, reply); if (!userId) return;
+  const profile = req.body?.profile;
+  if (!profile || typeof profile !== 'object') return reply.code(400).send({ error: 'profile object required' });
+  const version = saveProfile(userId, profile);
+  return { profile, version };
+});
+
+// Store catalog — coin packs (free in local emulation).
+const STORE_ITEMS = [
+  { id: 'coins_1k', kind: 'coins', name: '1,000 Coins', price: 0, grantsCoins: 1000 },
+  { id: 'coins_5k', kind: 'coins', name: '5,000 Coins', price: 0, grantsCoins: 5000 },
+  { id: 'coins_15k', kind: 'coins', name: '15,000 Coins', price: 0, grantsCoins: 15000 },
+];
+app.get('/api/v1/store', async () => ({ items: STORE_ITEMS }));
 
 app.listen({ host: HOST, port: PORT })
-  .then(() => app.log.info(`Overdrive backend listening on http://${HOST}:${PORT}`))
+  .then(() => app.log.info(`OverdriveX backend on http://${HOST}:${PORT}`))
   .catch((e) => { app.log.error(e); process.exit(1); });

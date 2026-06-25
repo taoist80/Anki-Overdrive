@@ -24,8 +24,12 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -343,7 +347,36 @@ fun WireframeScreen(
     }
 }
 
-/** Pill showing the player's coin balance (top-right chrome). Stubbed value for now. */
+/** Themed single-line text field for auth/forms. */
+@Composable
+fun OverdriveTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    modifier: Modifier = Modifier,
+    isPassword: Boolean = false,
+) {
+    val colors = OverdriveTheme.colors
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = { Text(label) },
+        singleLine = true,
+        visualTransformation = if (isPassword) PasswordVisualTransformation() else VisualTransformation.None,
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedBorderColor = colors.gold,
+            unfocusedBorderColor = colors.panelBorder,
+            focusedLabelColor = colors.gold,
+            unfocusedLabelColor = colors.textDim,
+            focusedTextColor = colors.textPrimary,
+            unfocusedTextColor = colors.textPrimary,
+            cursorColor = colors.gold,
+        ),
+        modifier = modifier,
+    )
+}
+
+/** Pill showing the player's coin balance (top-right chrome). */
 @Composable
 fun CoinPill(amount: Int = 0, font: FontFamily = OverdriveTheme.font) {
     val colors = OverdriveTheme.colors

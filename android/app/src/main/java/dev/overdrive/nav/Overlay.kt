@@ -42,8 +42,14 @@ import dev.overdrive.ui.theme.OverdriveTheme
  * recurring ones as chrome stubs; each gets wired to real data in later phases.
  */
 sealed interface Overlay {
-    /** Animated loot-box reveal shown after a race (sb_LootDrop_ViewController). */
-    object LootReveal : Overlay
+    /** Loot-box reveal shown after a race (sb_LootDrop_ViewController); carries the rolled reward. */
+    data class LootReveal(
+        val coins: Int,
+        val itemId: String,
+        val itemName: String,
+        val rarity: String,
+        val rarityColor: Long,
+    ) : Overlay
 
     /** Game mutator / rules picker (MutatorModalViewController). */
     object MutatorPicker : Overlay
@@ -97,13 +103,19 @@ fun OverlayHost(controller: OverlayController) {
                 ),
             contentAlignment = Alignment.Center,
         ) {
+            val ctx = androidx.compose.ui.platform.LocalContext.current
             when (val o = controller.current ?: overlay) {
-                Overlay.LootReveal -> OverlayCard(
+                is Overlay.LootReveal -> OverlayCard(
                     title = "LOOT DROP",
-                    accentTitle = "★ RARE ★",
-                    message = "An animated loot reveal will play here.\nReward: +120 coins, Tire Mod (Common).",
+                    accentTitle = "★ ${o.rarity} ★",
+                    accentColor = o.rarityColor,
+                    message = "+${o.coins} coins\n${o.itemName}",
                     primaryLabel = "COLLECT",
-                    onPrimary = controller::dismiss,
+                    onPrimary = {
+                        dev.overdrive.profile.ProfileRepository.addCoins(ctx, o.coins)
+                        dev.overdrive.profile.ProfileRepository.addItem(ctx, o.itemId)
+                        controller.dismiss()
+                    },
                 )
                 Overlay.MutatorPicker -> OverlayCard(
                     title = "MUTATORS",
@@ -144,9 +156,11 @@ private fun OverlayCard(
     primaryLabel: String,
     onPrimary: () -> Unit,
     accentTitle: String? = null,
+    accentColor: Long? = null,
 ) {
     val colors = OverdriveTheme.colors
     val font = OverdriveTheme.font
+    val accent = accentColor?.let { Color(it) } ?: colors.gold
     Column(
         Modifier
             .widthIn(max = 460.dp)
@@ -160,10 +174,10 @@ private fun OverlayCard(
         if (accentTitle != null) {
             Spacer(Modifier.height(8.dp))
             Box(Modifier.size(width = 120.dp, height = 120.dp).clip(RoundedCornerShape(8.dp)).background(colors.barEmpty), contentAlignment = Alignment.Center) {
-                Text("◆", color = colors.gold, fontSize = 56.sp)
+                Text("◆", color = accent, fontSize = 56.sp)
             }
             Spacer(Modifier.height(8.dp))
-            Text(accentTitle, fontFamily = font, color = colors.gold, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            Text(accentTitle, fontFamily = font, color = accent, fontSize = 18.sp, fontWeight = FontWeight.Bold)
         }
         Spacer(Modifier.height(14.dp))
         Text(message, fontFamily = font, color = colors.textDim, fontSize = 14.sp, textAlign = TextAlign.Center)

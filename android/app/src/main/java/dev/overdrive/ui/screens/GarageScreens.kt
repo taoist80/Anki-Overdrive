@@ -1,23 +1,32 @@
 package dev.overdrive.ui.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.overdrive.GameData
+import dev.overdrive.game.MetaGame
 import dev.overdrive.nav.OverdriveNav
 import dev.overdrive.nav.Routes
 import dev.overdrive.profile.ProfileRepository
@@ -25,6 +34,7 @@ import dev.overdrive.ui.components.ButtonAccent
 import dev.overdrive.ui.components.CarHero
 import dev.overdrive.ui.components.CoinPill
 import dev.overdrive.ui.components.NavAction
+import dev.overdrive.ui.components.OverdrivePanel
 import dev.overdrive.ui.components.OverdriveScaffold
 import dev.overdrive.ui.components.PrimaryButton
 import dev.overdrive.ui.components.WireframeScreen
@@ -90,19 +100,68 @@ fun VehicleDetailScreen(nav: OverdriveNav, carId: Int) {
 }
 
 @Composable
-fun GarageUpgradesScreen(nav: OverdriveNav) = WireframeScreen(
-    title = "Upgrades",
-    onBack = { nav.back() },
-    subtitle = "Spend coins/XP on per-vehicle upgrade cards (speed, weapons, defense). " +
-        "Sourced from upgradeData.json.",
-)
+fun GarageUpgradesScreen(nav: OverdriveNav) {
+    val ctx = LocalContext.current
+    remember { ProfileRepository.load(ctx); 0 }
+    val profile = ProfileRepository.profile
+    val colors = OverdriveTheme.colors
+    val font = OverdriveTheme.font
+    OverdriveScaffold(title = "Upgrades", onBack = { nav.back() }, right = { CoinPill(profile.coins, font) }) { mod ->
+        Column(mod.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Spend coins to upgrade your fleet.", fontFamily = font, color = colors.textDim, fontSize = 13.sp)
+            MetaGame.UPGRADE_TRACKS.forEach { track ->
+                val level = profile.upgradeLevel(track.key)
+                val cost = MetaGame.upgradeCost(track, level)
+                val maxed = level >= track.maxLevel
+                val canAfford = profile.coins >= cost
+                OverdrivePanel(Modifier.fillMaxWidth()) { inner ->
+                    Row(inner.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                        Column {
+                            Text(track.name.uppercase(), fontFamily = font, color = colors.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                            Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                repeat(track.maxLevel) { i ->
+                                    Box(Modifier.width(22.dp).height(8.dp).clip(RoundedCornerShape(2.dp))
+                                        .background(if (i < level) colors.gold else colors.barEmpty))
+                                }
+                            }
+                        }
+                        if (maxed) Text("MAX", fontFamily = font, color = colors.gold, fontWeight = FontWeight.Bold)
+                        else PrimaryButton(
+                            "$cost ◉",
+                            { ProfileRepository.buyUpgrade(ctx, track.key, cost) },
+                            accent = if (canAfford) ButtonAccent.Gold else ButtonAccent.Outline,
+                            enabled = canAfford,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
 
 @Composable
-fun GarageItemsScreen(nav: OverdriveNav) = WireframeScreen(
-    title = "Items",
-    onBack = { nav.back() },
-    subtitle = "Equip weapons/support items into the vehicle's bays. Sourced from items.json.",
-)
+fun GarageItemsScreen(nav: OverdriveNav) {
+    val ctx = LocalContext.current
+    remember { ProfileRepository.load(ctx); 0 }
+    val inv = ProfileRepository.profile.inventory
+    val colors = OverdriveTheme.colors
+    val font = OverdriveTheme.font
+    OverdriveScaffold(title = "Items", onBack = { nav.back() }) { mod ->
+        Column(mod.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (inv.isEmpty()) {
+                Text("No items yet — open loot boxes after races to earn weapons & mods.", fontFamily = font, color = colors.textDim, fontSize = 14.sp)
+            }
+            inv.entries.sortedByDescending { it.value }.forEach { (id, count) ->
+                OverdrivePanel(Modifier.fillMaxWidth()) { inner ->
+                    Row(inner.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(MetaGame.itemName(id), fontFamily = font, color = colors.textPrimary, fontSize = 16.sp)
+                        Text("×$count", fontFamily = font, color = colors.gold, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
 
 @Composable
 fun GarageDailySpecialsScreen(nav: OverdriveNav) = WireframeScreen(

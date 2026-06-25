@@ -46,6 +46,7 @@ import dev.overdrive.CarState
 import dev.overdrive.GameData
 import dev.overdrive.data.ContentRepository
 import dev.overdrive.ui.theme.rememberAsset
+import dev.overdrive.game.MetaGame
 import dev.overdrive.game.campaign.CampaignEngine
 import dev.overdrive.game.race.RaceEngineHolder
 import dev.overdrive.game.race.RoadPieces
@@ -400,7 +401,10 @@ fun RaceResultsScreen(nav: OverdriveNav, campaignMissionId: String) {
             }
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                PrimaryButton("Open Loot", { nav.showOverlay(Overlay.LootReveal) }, Modifier.weight(1f), ButtonAccent.Gold)
+                PrimaryButton("Open Loot", {
+                    val r = MetaGame.rollLoot()
+                    nav.showOverlay(Overlay.LootReveal(r.coins, r.itemId, r.itemName, r.rarity, r.rarityColor))
+                }, Modifier.weight(1f), ButtonAccent.Gold)
                 if (isCampaign) PrimaryButton("Next Mission", { nav.go(Routes.CampaignGraph) }, Modifier.weight(1f), ButtonAccent.Blue)
                 else PrimaryButton("Rematch", { nav.go(Routes.MatchSetup()) }, Modifier.weight(1f), ButtonAccent.Outline)
                 PrimaryButton("Home", { nav.home() }, Modifier.weight(1f), ButtonAccent.Outline)
