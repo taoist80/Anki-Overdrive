@@ -68,6 +68,10 @@ class CarManager(private val context: Context) {
     private val conns = LinkedHashMap<String, CarConn>()
     private val seen = HashSet<String>()
 
+    /** Telemetry hooks for the RaceEngine. Invoked on the main thread. */
+    var onPosition: ((address: String, pos: Protocol.Position) -> Unit)? = null
+    var onTransition: ((address: String) -> Unit)? = null
+
     init {
         // periodic refresh so per-car uptime ticks in the UI
         main.post(object : Runnable {
@@ -121,6 +125,22 @@ class CarManager(private val context: Context) {
     fun changePriority(p: Prio) { priority = p; conns.values.forEach { it.applyPriority(p) }; log("set priority -> ${p.label}") }
     fun changeStress(on: Boolean) { stress = on; conns.values.forEach { it.setStress(on) }; log("drive-all (load) -> $on") }
 
+    // ---- Race control (used by RaceEngine; no-ops for unknown/disconnected cars) ----
+    /** Currently-connected cars, in connection order. */
+    fun connectedCars(): List<CarInfo> = conns.values.map { it.info() }.filter { it.state == CarState.Connected }
+
+    /** Set a car's target speed (mm/s). The car follows the track in firmware at this speed. */
+    fun drive(address: String, speedMmPerSec: Int, accelMmPerSec2: Int = 1000) =
+        conns[address]?.driveCmd(speedMmPerSec, accelMmPerSec2) ?: Unit
+
+    /** Change lane to an absolute horizontal offset (mm from track centerline). */
+    fun changeLane(address: String, offsetMm: Float, hSpeed: Int = 300, hAccel: Int = 1000) =
+        conns[address]?.laneCmd(offsetMm, hSpeed, hAccel) ?: Unit
+
+    /** Set the car's internal notion of its current offset (baseline before changeLane). */
+    fun setLaneOffset(address: String, offsetMm: Float) =
+        conns[address]?.offsetCmd(offsetMm) ?: Unit
+
     @SuppressLint("MissingPermission")
     inner class CarConn(val device: BluetoothDevice, val name: String) {
         private var gatt: BluetoothGatt? = null
@@ -146,6 +166,11 @@ class CarManager(private val context: Context) {
         fun shutdown() { driveOn = false; try { gatt?.disconnect(); gatt?.close() } catch (_: Exception) {}; gatt = null; state = CarState.Disconnected }
         fun applyPriority(p: Prio) { gatt?.requestConnectionPriority(p.v) }
         fun setStress(on: Boolean) { driveOn = on; if (on && state == CarState.Connected) main.post(driveLoop) }
+
+        // Race control. Disable the lab oscillator if it was on, so the RaceEngine owns the speed.
+        fun driveCmd(speed: Int, accel: Int) { driveOn = false; spd = speed; if (state == CarState.Connected) send(Protocol.setSpeed(speed, accel)) }
+        fun laneCmd(offsetMm: Float, hSpeed: Int, hAccel: Int) { if (state == CarState.Connected) send(Protocol.changeLane(offsetMm, hSpeed, hAccel)) }
+        fun offsetCmd(mm: Float) { if (state == CarState.Connected) send(Protocol.setOffset(mm)) }
 
         private val driveLoop = object : Runnable {
             override fun run() {
@@ -190,8 +215,20 @@ class CarManager(private val context: Context) {
                 if (stress) { driveOn = true; main.post(driveLoop) }
                 refresh()
             }
-            override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic, v: ByteArray) {}
-            @Deprecated("pre-33") override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic) {}
+            override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic, v: ByteArray) = handleNotify(v)
+            @Deprecated("pre-33") override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic) {
+                @Suppress("DEPRECATION") c.value?.let { handleNotify(it) }
+            }
+        }
+
+        /** Parse vehicle->client notifications and surface position/transition to the RaceEngine. */
+        private fun handleNotify(v: ByteArray) {
+            when (Protocol.msgId(v)) {
+                Protocol.MSG_LOCALIZATION_POSITION ->
+                    Protocol.parsePosition(v)?.let { p -> main.post { onPosition?.invoke(device.address, p) } }
+                Protocol.MSG_LOCALIZATION_TRANSITION ->
+                    main.post { onTransition?.invoke(device.address) }
+            }
         }
 
         private fun send(bytes: ByteArray) {

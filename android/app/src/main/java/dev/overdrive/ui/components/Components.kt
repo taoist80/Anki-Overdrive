@@ -28,6 +28,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -164,6 +165,7 @@ fun PrimaryButton(
     Box(
         modifier
             .heightIn(min = 52.dp)
+            .alpha(if (enabled) 1f else 0.4f)
             .clip(shape)
             .then(if (outline) Modifier.border(1.5.dp, colors.gold.copy(alpha = 0.8f), shape) else Modifier)
             .background(if (outline) Color(0x22FFFFFF) else fill)
