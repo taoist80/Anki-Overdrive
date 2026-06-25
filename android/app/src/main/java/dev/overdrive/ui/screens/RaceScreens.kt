@@ -21,9 +21,13 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import dev.overdrive.data.ContentRepository
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -39,19 +43,11 @@ import dev.overdrive.ui.components.PrimaryButton
 import dev.overdrive.ui.components.WireframeScreen
 import dev.overdrive.ui.theme.OverdriveTheme
 
-private data class GameMode(val name: String, val art: String, val blurb: String)
-
-private val GAME_MODES = listOf(
-    GameMode("Race", "ui/ui_selectMode_openPlay.png", "Classic lap race — first across the line wins."),
-    GameMode("Battle", "ui/ui_selectMode_practice.png", "Blast opponents with weapons; last car standing."),
-    GameMode("King of the Hill", "ui/ui_selectMode_tournament.png", "Hold the lead zone to bank points."),
-    GameMode("Elimination", "ui/ui_selectMode_openPlay.png", "Last-place car is knocked out each round."),
-    GameMode("Time Trial", "ui/ui_selectMode_practice.png", "Set the fastest solo lap."),
-    GameMode("Takeover", "ui/ui_selectMode_tournament.png", "Capture and defend track segments."),
-)
-
 @Composable
 fun GameModeSelectScreen(nav: OverdriveNav) {
+    val ctx = LocalContext.current
+    remember { ContentRepository.load(ctx); 0 }
+    val modes = ContentRepository.modes
     OverdriveScaffold(title = "Select Mode", onBack = { nav.back() }) { mod ->
         LazyVerticalGrid(
             columns = GridCells.Adaptive(180.dp),
@@ -60,12 +56,13 @@ fun GameModeSelectScreen(nav: OverdriveNav) {
             verticalArrangement = Arrangement.spacedBy(14.dp),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 12.dp),
         ) {
-            items(GAME_MODES) { m ->
+            items(modes) { m ->
                 ModeTile(
-                    title = m.name,
-                    image = m.art,
-                    subtitle = m.blurb,
-                    onClick = { nav.go(Routes.GameModeDetail(m.name)) },
+                    title = m.title,
+                    image = m.imageAsset,
+                    subtitle = m.description?.take(90)?.let { if (it.length == 90) "$it…" else it },
+                    accent = Color(m.tintArgb),
+                    onClick = { nav.go(Routes.GameModeDetail(m.internalName)) },
                 )
             }
         }
@@ -74,14 +71,17 @@ fun GameModeSelectScreen(nav: OverdriveNav) {
 
 @Composable
 fun GameModeDetailScreen(nav: OverdriveNav, mode: String) {
-    val blurb = GAME_MODES.firstOrNull { it.name == mode }?.blurb ?: "Game mode details."
+    val ctx = LocalContext.current
+    remember { ContentRepository.load(ctx); 0 }
+    val gm = ContentRepository.modeByInternalName(mode)
     WireframeScreen(
-        title = mode,
+        title = gm?.title ?: mode,
         onBack = { nav.back() },
-        subtitle = "$blurb\n\nConfigure laps, teams, and mutators, then continue to match setup.",
+        subtitle = (gm?.description ?: "Game mode details.") +
+            "\n\nConfigure laps, teams, and mutators, then continue to match setup.",
         actions = listOf(
             NavAction("Mutators", { nav.showOverlay(Overlay.MutatorPicker) }, ButtonAccent.Outline),
-            NavAction("Continue", { nav.go(Routes.MatchSetup(mode = mode)) }, ButtonAccent.Blue),
+            NavAction("Continue", { nav.go(Routes.MatchSetup(mode = gm?.title ?: mode)) }, ButtonAccent.Blue),
         ),
     )
 }

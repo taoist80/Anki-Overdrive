@@ -238,24 +238,30 @@ fun StarRow(earned: Int, total: Int = 3, size: Int = 22) {
 @Composable
 fun ModeTile(
     title: String,
-    image: String,
+    image: String?,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     subtitle: String? = null,
+    accent: Color? = null,
 ) {
     val colors = OverdriveTheme.colors
     val font = OverdriveTheme.font
     val art = rememberAsset(image)
+    val edge = accent ?: colors.panelBorder
     val shape = RoundedCornerShape(10.dp)
     Column(
         modifier
             .clip(shape)
-            .border(1.dp, colors.panelBorder, shape)
+            .border(1.dp, edge.copy(alpha = 0.8f), shape)
             .background(colors.panel.copy(alpha = 0.6f))
             .clickable(onClick = onClick)
             .padding(14.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        if (accent != null) {
+            Box(Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)).background(accent))
+            Spacer(Modifier.height(10.dp))
+        }
         if (art != null) {
             Image(art, title, Modifier.fillMaxWidth().heightIn(min = 90.dp, max = 150.dp), contentScale = ContentScale.Fit)
         } else {
