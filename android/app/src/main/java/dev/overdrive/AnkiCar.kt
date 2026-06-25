@@ -10,176 +10,194 @@ import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.bluetooth.le.ScanCallback
-import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
-import android.os.ParcelUuid
+import android.os.SystemClock
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 
-enum class ConnState { Disconnected, Scanning, Connecting, Connected }
+enum class CarState { Disconnected, Connecting, Connected }
+
+/** Connection priority = Android's lever over the connection interval (≈ the game's 30 ms is BALANCED). */
+enum class Prio(val v: Int, val label: String) {
+    HIGH(BluetoothGatt.CONNECTION_PRIORITY_HIGH, "HIGH ~11ms"),
+    BALANCED(BluetoothGatt.CONNECTION_PRIORITY_BALANCED, "BAL ~30ms"),
+    LOW(BluetoothGatt.CONNECTION_PRIORITY_LOW_POWER, "LOW ~100ms+"),
+}
 
 data class FoundDevice(val name: String, val address: String, val rssi: Int, val device: BluetoothDevice)
 
-data class Telemetry(
-    val log: String = "",
-    val position: Protocol.Position? = null,
-    val version: Int? = null,
-    val battery: Int? = null,
+data class CarInfo(
+    val address: String, val name: String, val state: CarState,
+    val lastStatus: Int = -1, val uptimeS: Long = 0, val drops: Int = 0,
 )
 
-/**
- * Minimal BLE controller for one Anki car: scan -> connect -> enable notifications ->
- * SDK mode -> drive. State is exposed as Compose state for the UI to observe.
- * Permissions (BLUETOOTH_SCAN/CONNECT) are requested by the Activity before use.
- */
+/** Decodes the BluetoothGattCallback status (= the HCI disconnect reason surfaced to the app). */
+fun statusName(s: Int): String = when (s) {
+    0 -> "OK"
+    8 -> "0x08 SUPERVISION-TIMEOUT (link lost)"
+    19 -> "0x13 remote terminated"
+    22 -> "0x16 local terminated"
+    34 -> "0x22 LMP timeout"
+    62 -> "0x3E fail-to-establish"
+    133 -> "0x85 GATT_ERROR"
+    else -> "status=$s"
+}
+
 @SuppressLint("MissingPermission")
-class AnkiCar(private val context: Context) {
+class CarManager(private val context: Context) {
     private val main = Handler(Looper.getMainLooper())
     private val adapter: BluetoothAdapter? =
         (context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
     private val scanner get() = adapter?.bluetoothLeScanner
+    val maxCars = 4
 
-    var state by mutableStateOf(ConnState.Disconnected); private set
-    var telemetry by mutableStateOf(Telemetry()); private set
-    val devices = mutableStateListOf<FoundDevice>()
+    var scanning by mutableStateOf(false); private set
+    var priority by mutableStateOf(Prio.BALANCED); private set
+    var stress by mutableStateOf(false); private set
+    var log by mutableStateOf(""); private set
+    val found = mutableStateListOf<FoundDevice>()
+    val cars = mutableStateListOf<CarInfo>()
 
-    private var gatt: BluetoothGatt? = null
-    private var writeChar: BluetoothGattCharacteristic? = null
+    private val conns = LinkedHashMap<String, CarConn>()
     private val seen = HashSet<String>()
+
+    init {
+        // periodic refresh so per-car uptime ticks in the UI
+        main.post(object : Runnable {
+            override fun run() { if (conns.isNotEmpty()) refresh(); main.postDelayed(this, 1000) }
+        })
+    }
 
     private fun log(s: String) {
         android.util.Log.i("OverdriveX", s)
-        main.post { telemetry = telemetry.copy(log = (s + "\n" + telemetry.log).take(4000)) }
+        main.post { log = (s + "\n" + log).take(8000) }
+    }
+
+    private fun refresh() = main.post {
+        cars.clear(); conns.values.forEach { cars.add(it.info()) }
     }
 
     fun startScan() {
-        val s = scanner ?: run { log("No BLE scanner — is Bluetooth on?"); return }
-        devices.clear(); seen.clear()
-        state = ConnState.Scanning
+        val s = scanner ?: run { log("No BLE scanner (Bluetooth off?)"); return }
+        found.clear(); seen.clear(); scanning = true
         val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
-        s.startScan(null, settings, scanCallback)   // unfiltered — some cars omit the service UUID from the ADV packet
-        log("Scanning for Anki cars…")
+        s.startScan(null, settings, scanCb)
+        log("Scanning…")
         main.postDelayed({ stopScan() }, 8000)
     }
+    fun stopScan() { scanner?.stopScan(scanCb); scanning = false }
 
-    fun stopScan() {
-        scanner?.stopScan(scanCallback)
-        if (state == ConnState.Scanning) state = ConnState.Disconnected
-    }
-
-    private val scanCallback = object : ScanCallback() {
-        override fun onScanResult(callbackType: Int, result: ScanResult) {
-            val dev = result.device
-            val rec = result.scanRecord
-            val hasAnki = rec?.serviceUuids?.any { it.uuid == Protocol.SERVICE } == true
-            val name = dev.name ?: rec?.deviceName
+    private val scanCb = object : ScanCallback() {
+        override fun onScanResult(t: Int, r: ScanResult) {
+            val d = r.device; val rec = r.scanRecord
+            val anki = rec?.serviceUuids?.any { it.uuid == Protocol.SERVICE } == true
+            val nm = d.name ?: rec?.deviceName
             main.post {
-                if (seen.add(dev.address)) log("seen ${name ?: "?"} ${dev.address} ${result.rssi}dBm anki=$hasAnki")
-                val looksAnki = hasAnki ||
-                    name?.contains("Drive", true) == true || name?.contains("Anki", true) == true
-                if (looksAnki && devices.none { it.address == dev.address }) {
-                    devices.add(FoundDevice(name ?: "Anki car", dev.address, result.rssi, dev))
-                    log("→ car: ${name ?: "Anki car"} ${dev.address} (${result.rssi} dBm)")
-                }
+                if (seen.add(d.address)) log("seen ${nm ?: "?"} ${d.address} ${r.rssi}dBm anki=$anki")
+                val looks = anki || nm?.contains("Drive", true) == true || nm?.contains("Anki", true) == true
+                if (looks && found.none { it.address == d.address } && !conns.containsKey(d.address))
+                    found.add(FoundDevice(nm ?: "Anki car", d.address, r.rssi, d))
             }
         }
-
-        override fun onScanFailed(errorCode: Int) { log("Scan failed: $errorCode") }
+        override fun onScanFailed(e: Int) = log("Scan failed: $e")
     }
 
     fun connect(d: FoundDevice) {
+        if (conns.size >= maxCars) { log("Max $maxCars cars connected"); return }
         stopScan()
-        state = ConnState.Connecting
-        log("Connecting to ${d.address}…")
-        gatt = d.device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+        found.removeAll { it.address == d.address }
+        conns[d.address] = CarConn(d.device, d.name).also { it.connect() }
+        refresh()
     }
 
-    fun disconnect() {
-        send(Protocol.disconnect())
-        gatt?.disconnect()
-    }
+    fun disconnectAll() { conns.values.forEach { it.shutdown() }; conns.clear(); refresh(); log("--- disconnect all ---") }
+    fun changePriority(p: Prio) { priority = p; conns.values.forEach { it.applyPriority(p) }; log("set priority -> ${p.label}") }
+    fun changeStress(on: Boolean) { stress = on; conns.values.forEach { it.setStress(on) }; log("drive-all (load) -> $on") }
 
-    fun setSpeed(mm: Int) = send(Protocol.setSpeed(mm))
-    fun changeLane(offsetMm: Float) = send(Protocol.changeLane(offsetMm))
-    fun stop() = send(Protocol.setSpeed(0))
+    @SuppressLint("MissingPermission")
+    inner class CarConn(val device: BluetoothDevice, val name: String) {
+        private var gatt: BluetoothGatt? = null
+        private var writeChar: BluetoothGattCharacteristic? = null
+        private var state = CarState.Connecting
+        private var lastStatus = -1
+        private var drops = 0
+        private var connectedAt = 0L
+        private var driveOn = false
+        private var spd = 0
 
-    private val gattCallback = object : BluetoothGattCallback() {
-        override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
-            when (newState) {
-                BluetoothProfile.STATE_CONNECTED -> { log("Connected; discovering services…"); g.discoverServices() }
-                BluetoothProfile.STATE_DISCONNECTED -> {
-                    log("Disconnected (status=$status)")
-                    g.close(); gatt = null; writeChar = null
-                    main.post { state = ConnState.Disconnected }
+        fun info(): CarInfo {
+            val up = if (state == CarState.Connected && connectedAt > 0)
+                (SystemClock.elapsedRealtime() - connectedAt) / 1000 else 0
+            return CarInfo(device.address, name, state, lastStatus, up, drops)
+        }
+
+        fun connect() {
+            state = CarState.Connecting
+            log("[$name] connecting…")
+            gatt = device.connectGatt(context, false, cb, BluetoothDevice.TRANSPORT_LE)
+        }
+        fun shutdown() { driveOn = false; try { gatt?.disconnect(); gatt?.close() } catch (_: Exception) {}; gatt = null; state = CarState.Disconnected }
+        fun applyPriority(p: Prio) { gatt?.requestConnectionPriority(p.v) }
+        fun setStress(on: Boolean) { driveOn = on; if (on && state == CarState.Connected) main.post(driveLoop) }
+
+        private val driveLoop = object : Runnable {
+            override fun run() {
+                if (!driveOn || state != CarState.Connected) return
+                spd = if (spd == 0) 300 else 0          // oscillate to create realistic command traffic (no track needed)
+                send(Protocol.setSpeed(spd, 1000))
+                main.postDelayed(this, 100)
+            }
+        }
+
+        private val cb = object : BluetoothGattCallback() {
+            override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
+                if (newState == BluetoothProfile.STATE_CONNECTED) {
+                    log("[$name] CONNECTED (status=$status); requesting ${priority.label}; discovering")
+                    g.requestConnectionPriority(priority.v)
+                    g.discoverServices()
+                } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                    lastStatus = status
+                    if (state == CarState.Connected) drops++
+                    val up = if (connectedAt > 0) (SystemClock.elapsedRealtime() - connectedAt) / 1000 else 0
+                    log("[$name] DISCONNECTED ${statusName(status)} after ${up}s (drops=$drops)")
+                    state = CarState.Disconnected; driveOn = false
+                    try { g.close() } catch (_: Exception) {}; gatt = null
+                    // auto-reconnect so the lab keeps measuring stability over time
+                    main.postDelayed({ if (conns.containsKey(device.address)) connect() }, 1500)
                 }
+                refresh()
             }
-        }
-
-        override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
-            val svc = g.getService(Protocol.SERVICE) ?: run { log("Anki GATT service not found"); return }
-            writeChar = svc.getCharacteristic(Protocol.WRITE_CHAR)
-            val notify = svc.getCharacteristic(Protocol.NOTIFY_CHAR)
-            if (writeChar == null || notify == null) { log("Expected characteristics missing"); return }
-            g.setCharacteristicNotification(notify, true)
-            val cccd = notify.getDescriptor(Protocol.CCCD)
-            if (Build.VERSION.SDK_INT >= 33) {
-                g.writeDescriptor(cccd, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
-            } else {
-                @Suppress("DEPRECATION") run {
-                    cccd.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-                    g.writeDescriptor(cccd)
-                }
+            override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
+                val svc = g.getService(Protocol.SERVICE) ?: run { log("[$name] Anki service missing"); return }
+                writeChar = svc.getCharacteristic(Protocol.WRITE_CHAR)
+                val n = svc.getCharacteristic(Protocol.NOTIFY_CHAR) ?: return
+                g.setCharacteristicNotification(n, true)
+                val cccd = n.getDescriptor(Protocol.CCCD)
+                if (Build.VERSION.SDK_INT >= 33) g.writeDescriptor(cccd, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
+                else { @Suppress("DEPRECATION") run { cccd.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE; g.writeDescriptor(cccd) } }
             }
-            log("Enabling notifications…")
-        }
-
-        override fun onDescriptorWrite(g: BluetoothGatt, desc: BluetoothGattDescriptor, status: Int) {
-            main.post { state = ConnState.Connected }
-            log("SDK mode ON — ready to drive")
-            send(Protocol.sdkMode(true))
-            send(Protocol.setOffset(0f))
-            send(Protocol.version())
-            send(Protocol.battery())
-        }
-
-        override fun onCharacteristicChanged(g: BluetoothGatt, ch: BluetoothGattCharacteristic, value: ByteArray) =
-            handleNotify(value)
-
-        @Deprecated("Deprecated in API 33")
-        override fun onCharacteristicChanged(g: BluetoothGatt, ch: BluetoothGattCharacteristic) {
-            @Suppress("DEPRECATION") handleNotify(ch.value ?: return)
-        }
-    }
-
-    private fun handleNotify(d: ByteArray) {
-        when (Protocol.msgId(d)) {
-            Protocol.MSG_LOCALIZATION_POSITION ->
-                Protocol.parsePosition(d)?.let { p -> main.post { telemetry = telemetry.copy(position = p) } }
-            Protocol.MSG_VERSION_RESPONSE ->
-                main.post { telemetry = telemetry.copy(version = Protocol.u16le(d, 2)) }
-            Protocol.MSG_BATTERY_RESPONSE ->
-                main.post { telemetry = telemetry.copy(battery = Protocol.u16le(d, 2)) }
-        }
-    }
-
-    private fun send(bytes: ByteArray) {
-        val g = gatt ?: return
-        val ch = writeChar ?: return
-        if (Build.VERSION.SDK_INT >= 33) {
-            g.writeCharacteristic(ch, bytes, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
-        } else {
-            @Suppress("DEPRECATION") run {
-                ch.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
-                ch.value = bytes
-                g.writeCharacteristic(ch)
+            override fun onDescriptorWrite(g: BluetoothGatt, d: BluetoothGattDescriptor, status: Int) {
+                state = CarState.Connected; connectedAt = SystemClock.elapsedRealtime()
+                send(Protocol.sdkMode(true)); send(Protocol.setOffset(0f))
+                log("[$name] ready (SDK mode on)")
+                if (stress) { driveOn = true; main.post(driveLoop) }
+                refresh()
             }
+            override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic, v: ByteArray) {}
+            @Deprecated("pre-33") override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic) {}
+        }
+
+        private fun send(bytes: ByteArray) {
+            val g = gatt ?: return; val ch = writeChar ?: return
+            if (Build.VERSION.SDK_INT >= 33) g.writeCharacteristic(ch, bytes, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
+            else { @Suppress("DEPRECATION") run { ch.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE; ch.value = bytes; g.writeCharacteristic(ch) } }
         }
     }
 }

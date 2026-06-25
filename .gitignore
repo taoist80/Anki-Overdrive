@@ -27,3 +27,14 @@ keystore.properties
 
 # Reverse-engineering artifacts (regenerable from Ghidra)
 re/
+
+# Extracted Unity assets (derived/proprietary)
+assets-extracted/
+obb-extract/
+
+# Extracted game config (derived/proprietary) — backend reference only
+reference/
+
+# Bundled proprietary game assets in the app (derived from DDL/Anki — regenerate via extraction).
+# Covers cars/, fonts/, gamedata/, and ui/ chrome art — all derived/proprietary.
+android/app/src/main/assets/

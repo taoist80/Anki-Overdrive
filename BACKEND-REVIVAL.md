@@ -117,4 +117,30 @@ truth (that's what Anki's server did). Add a web dashboard over the DB to view/e
 - Token may be signed/validated in ways that constrain reissue (mitigated: our server signs+verifies).
 - If old-targetSdk user-CA trust is undesirable, may need a host-string + `http://` patch instead.
 
+## Reward economy & profile persistence (from a live DDL 2.6 run, 2026-06-25)
+
+A full Open Play run (weapon use → XP → loot box opened) confirmed how the economy works, which
+shapes what the backend must (and must not) do:
+
+- **Loot / XP / weapons / upgrades are CLIENT-SIDE.** The native engine rolls them from config
+  shipped in the OBB and writes the result to the **local profile** (heavy `labs.retrodrive` disk
+  writes observed during the run; **no** backend call — only dead `test-rams` showed up). So in
+  offline/guest mode the whole economy works with **no server**.
+- **The profile lives in the app's PRIVATE internal storage** (`/data/data/<pkg>/files/`). The app
+  is **not debuggable** and the device isn't rooted → we can't pull the blob directly. To capture
+  the real profile/sync schema, **redirect `server_config.json`'s `ankival` host to our server and
+  capture the sync upload** (this is the same redirect we already planned — see Strategy).
+- **Backend role for the economy = persist + sync the profile blob** (coins, XP, per-vehicle
+  progression, item/upgrade inventory, loot received) via the **ankival KV store**, plus serve
+  `accounts` and optionally `virtualgoods`/`virtual_rewards`. **The backend does NOT generate loot.**
+- **Economy config (the data model) is in the OBB**, extracted to `reference/ddl-gamedata/`
+  (git-ignored): `lootDrops.json` (`open_play_loot`, `virtual_rewards`, car-specific prize boxes,
+  separate `loot_list_gen1`), `items.json`, `upgradeData.json`, `mutators.json`,
+  `virtualRewardsMapping.json`, `itemShopSchedule.json`, `medals.json`.
+- **Car catalog** (`vehicleTypes.json`, 21 types): Supercars (Skull/Groundshock/Thermo/Nuke/
+  Guardian/BigBang/Corax…), Supertrucks (x52/x52ice/Freewheel), **renamed F&F (Mammoth id18 /
+  Dynamo id19 / Ghost id20)**, and an explicit **`Unrecognized` (id101)**. This is the lookup that
+  decides "is this car recognized" — relevant to the earlier "only default cars" gap (a car shows
+  as Unrecognized if its model id isn't mapped here).
+
 Related: profile data model in [RECON.md](RECON.md); overall plan in [PLAN.md](PLAN.md).
