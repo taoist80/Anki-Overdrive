@@ -80,10 +80,9 @@ class RaceEngine(private val mgr: CarManager) {
         const val CONTROL_MS = 250L     // re-send cadence for target speeds
         const val FINISH_PIECE_ID = 33  // the unique start/finish piece ('B', isFinishLine) from tracks.json
         const val LANE_HEAL_MM = 12f    // re-send a lane change if the car is >this far from its target
-        const val SCAN_SPEED = 160      // mm/s during the scan lap — slow so a staged car halts ON the
-                                        // start piece. The car only reports roadPieceId=33 at the finish
-                                        // marker (~2/3 into the 0.22m 'B' piece); at 300mm/s the BLE
-                                        // report+command latency + coast carried it onto the NEXT piece.
+        const val SCAN_SPEED = 250      // mm/s during the scan lap — brisk enough to not feel like a crawl,
+                                        // while STAGE_BRAKE (hard brake the instant piece 33 is seen) keeps a
+                                        // staged car from coasting past the start piece. Tune down if it overshoots.
         const val STAGE_BRAKE = 2500    // mm/s^2 hard brake when staging (vs gentle race ACCEL) — minimize overshoot
         const val SCAN_TIMEOUT_MS = 45_000L  // give up waiting for every car to complete its scan lap
         const val SCAN_MIN_TRANSITIONS = 10  // a car counts as "mapped" after this many segments (track-agnostic; finish piece may not be 33)
@@ -211,11 +210,24 @@ class RaceEngine(private val mgr: CarManager) {
     fun stop() {
         targetSpeed.clear()
         scanning = false
-        tele.keys.forEach { mgr.drive(it, 0) }
         main.removeCallbacks(control)
         combat.stop()
-        Log.i(TAG, "Race.stop")
         publish(running = false)
+        assertAllStopped()   // BLE writes drop; re-assert drive(0) several times so cars actually halt
+        Log.i(TAG, "Race.stop")
+    }
+
+    /**
+     * Robustly bring every car to a halt: a single drive(0) can be lost over BLE (which is why a car
+     * kept circling after the race ended), and the control loop is gone by now, so nothing retries it.
+     * Re-send drive(0) a handful of times over ~1s. Each send is gated on the race not having restarted
+     * so a queued stop can't brake a freshly-started race.
+     */
+    private fun assertAllStopped() {
+        val addrs = tele.keys.toList()
+        for (i in 0 until 8) {
+            main.postDelayed({ if (!state.running && !scanning) addrs.forEach { mgr.drive(it, 0) } }, i * 150L)
+        }
     }
 
     /** HUD throttle: 0f..1f -> mm/s for the player's car (curve cap still applies live). */
