@@ -70,6 +70,24 @@ to `lapTarget` ends the race (`finishRace`) → Results. Default throttle 0.55.
   render, else weapon-class hitzone icon). **In-race HUD bay buttons show the weapon icon + ATTACK/
   SUPPORT label**; Race mode shows "NO WEAPONS — play BATTLE".
 
+## Latest test findings (campaign tutorial mission, mission_01)
+- **Lap debounce CONFIRMED working** — log: `RACE.lap IGNORED finish re-trigger @seg 10 (gap 4 < 5)`
+  then clean laps 1→2→3, finish at 3. The over-count bug is fixed.
+- **Scan hang ROOT CAUSE + FIX (committed):** the 2nd car (Dynamo) **never localized** (`piece=-1`
+  the whole run — not on the track / charger / weak link), and scan required *all* cars staged → hung.
+  Fixed: scan now completes when every car that has **localized** (roadPieceId ≥ 0) is staged; a
+  `piece=-1` car no longer blocks it (45s timeout still the backstop). Scan screen shows "place on
+  track" for a non-localized car.
+- **"AI didn't race"** = same dead 2nd car (stayed `piece=-1 spd=0` in the race too). Hardware, not
+  software — ensure both cars are on the track and charged before racing.
+- **Weapons in tutorial:** mode `tutorial` ≠ race, so weapons ARE enabled and the HUD bay buttons show.
+  Two reasons it felt off: (a) firing hit nothing (the only opponent was the dead car), and (b) the
+  **default loadout is abstract base items** (`base_machine_gun`/`base_shield`) which only have generic
+  hitzone icons, not canister art — so icons looked "not updated". Fix in the garage task below:
+  default the loadout to a real leveled item (with `-large.png` art) and let users equip real weapons.
+- Note: campaign mission game_types — mission_01 `tutorial`, 02 `onboarding_battle_cam`, 03
+  `onboarding_battle_brick`, 04/05 `race`, 06 `battle`. Only `race`/`time*` disable weapons.
+
 ## Phase 9 — remaining (next chat starts here)
 1. **Garage weapon-select loadout** — the 4.0.4 flow: Garage → car → **WEAPONS** card → 3 bay slots →
    **weapon picker** (horizontal cards w/ art + name + level, like screenshots

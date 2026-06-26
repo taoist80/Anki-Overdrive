@@ -259,8 +259,9 @@ fun TrackScanScreen(nav: OverdriveNav) {
                     Text(when {
                         c.laps >= 1 -> "mapped ✓"
                         c.offTrack -> "off track — replace it"
+                        c.roadPieceId < 0 -> "place on track"
                         else -> "${c.transitions} segments…"
-                    }, fontFamily = font, color = if (c.offTrack) colors.danger else colors.textDim, fontSize = 13.sp)
+                    }, fontFamily = font, color = if (c.offTrack || c.roadPieceId < 0) colors.danger else colors.textDim, fontSize = 13.sp)
                 }
             }
             Spacer(Modifier.height(24.dp))

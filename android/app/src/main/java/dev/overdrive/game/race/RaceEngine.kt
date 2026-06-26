@@ -239,8 +239,11 @@ class RaceEngine(private val mgr: CarManager) {
             if (!state.running && !scanning) return
             if (scanning) {
                 // Scan = map a lap, then stage each car at the finish line (onPosition adds to `staged`)
-                // so every car starts the race from the same place. Done when all are staged (or timeout).
-                val allStaged = tele.isNotEmpty() && staged.containsAll(tele.keys)
+                // so every car starts the race from the same place. Complete when every car that has
+                // LOCALIZED (ever reported a road piece) is staged — a car still at piece -1 isn't on
+                // the track (dead/on charger) and must not hang the scan. 45s timeout is the backstop.
+                val onTrack = tele.values.filter { it.roadPieceId >= 0 }
+                val allStaged = onTrack.isNotEmpty() && onTrack.all { it.address in staged }
                 val timedOut = SystemClock.elapsedRealtime() - scanStartedAt > SCAN_TIMEOUT_MS
                 if (allStaged || timedOut) { finishScan(timedOut); return }
             } else {
