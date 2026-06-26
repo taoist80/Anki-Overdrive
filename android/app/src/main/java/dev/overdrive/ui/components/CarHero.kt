@@ -9,12 +9,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.overdrive.CarType
@@ -27,6 +27,7 @@ fun CarHero(car: CarType, modifier: Modifier = Modifier) {
     val colors = OverdriveTheme.colors
     val font = OverdriveTheme.font
     val sprite = rememberAsset(car.spriteFile?.let { "cars/$it" })
+    val logo = rememberAsset(car.logoAsset)
     Column(
         modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -39,10 +40,12 @@ fun CarHero(car: CarType, modifier: Modifier = Modifier) {
                 Text(car.name, fontFamily = font, color = colors.textDim, fontSize = 44.sp)
             }
         }
-        Text(
-            car.name.uppercase(), fontFamily = font, color = colors.textPrimary,
-            fontSize = 42.sp, fontWeight = FontWeight.Bold,
-        )
+        // Prefer the branded 4.0.4 wordmark; fall back to the two-tone racing name.
+        if (logo != null) {
+            Image(logo, car.name, Modifier.fillMaxWidth(0.62f).heightIn(max = 64.dp), contentScale = ContentScale.Fit)
+        } else {
+            RacingName(car.name, fontSize = 40)
+        }
         car.series?.let {
             Text(it.uppercase(), fontFamily = font, color = colors.gold, fontSize = 14.sp)
         }

@@ -16,7 +16,14 @@ data class CarType(
     val supportBays: Int,
     val spriteFile: String?,   // a file in assets/cars/, or null
     val category: CarCategory = CarCategory.SUPERCARS,
-)
+) {
+    /**
+     * The branded two-tone name wordmark carved from 4.0.4 (ui_logo_<asset>), if one shipped for this
+     * model. Resolves by [assetName] (e.g. "groundshock" -> "ui/ui_logo_groundshock.webp"); callers
+     * fall back to the [RacingName] text when the asset is absent (rememberAsset returns null).
+     */
+    val logoAsset: String? get() = assetName?.let { "ui/ui_logo_$it.webp" }
+}
 
 /** Loads the reused Overdrive content (car catalog, etc.) from bundled assets/gamedata. */
 object GameData {

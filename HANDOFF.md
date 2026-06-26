@@ -143,12 +143,21 @@ Design spec artifact (4.0.4 layout, app palette, real data): published this sess
    Store/Profile/Coin Shop/Guide/Settings), `MultiplayerScreen` (themed placeholder). New routes
    `Routes.{SinglePlayer,Extras,Multiplayer}` + nav-host wiring; `HomeScreen` rebuilt to rose wordmark + the 4
    glowing text entries (no more stacked buttons / link row).
-   **REMAINING:** (a) carve nebula/HUD/icon art (extend `extract_ctex_art.py` w/ a `ui` mode → `assets/ui/`);
-   probe showed **no baked nebula bitmap** in 4.0.4 (only `simplegradient`) — our procedural `drawBehind` nebula
-   is the right call; useful carves = `controller_overlay` + `ui_icon_*` for the HUD. (b) in-race HUD rebuild
-   (hardest, below). (c) per-brand racing-name colors on car cards (no color data yet — holo tail is the
-   consistent default). (d) on-device visual verify of the whole restyle (needs unlock/screencap).
-   KEY LEVER (still true): centralized in `Theme.kt` + `Components.kt`.
+   **ASSET-WIRING PASS — DONE (build + on-device verified, branch `phase9-restyle-menu`).** Carved & wired the
+   real 4.0.4 art across the nav tree (`extract_ctex_art.py` now has a **`ui` mode**: named chrome + pattern
+   families `ui_logo_*` and `Loot_*`; assets/ are gitignored so regenerate via `python3 tools/extract_ctex_art.py ui`):
+   • **Nebula** — `base.png` carved is a **grayscale silk-cloud luminance** texture (4.0.4 tints it at runtime);
+     `OverdriveBackground` now tints it orchid + Screen-blends over the procedural violet ground (`ui/nebula_base.webp`).
+   • **Single Player cards** — full-bleed `ui_selectMode_{tournament,openPlay,practice}` illustrations + scrim band.
+   • **Vehicle logos (19)** — branded two-tone wordmarks; `CarType.logoAsset` (`ui/ui_logo_<assetName>.webp`)
+     wired into `CarHero` (garage carousel) + `VehicleDetail`, falling back to `RacingName` text.
+   • **Loot badges (38)** — `MetaGame.lootBadge(rarity,itemId)` → `ui/loot/Loot_<family>_<tier>.webp`; rendered in
+     the `Overlay.LootReveal` crate. • **GarageItems** — inline weapon glyphs per inventory row.
+   **REMAINING:** (a) in-race **HUD rebuild** (hardest; `controller_overlay.webp` already carved — see below).
+   (b) Stub screens still text-only (Profile/avatars, Medals, Store, Tracks, CoinShop packs, Chapter covers) —
+   note **no chapter-cover / commander-portrait / avatar / medal art exists in the apk textures** (F&F portraits
+   likely in video/CDN); ProfileMedals could reuse the `Loot_*` badges. (c) per-brand racing-name colors (logos
+   cover most cars now). KEY LEVER (still true): centralized in `Theme.kt` + `Components.kt`.
    ASSETS (carve from 4.0.4 via `tools/extract_ctex_art.py` — extend it with a UI mode; same WebP carve):
    `Assets/Background/{base,extended}.png` (nebula bg), `Assets/BaseUI/simplegradient.png` (card gradient),
    `Assets/BaseUI/controller_overlay.png` (in-race HUD frame), `Assets/BaseUI/icons/{damage,defense,

@@ -5,6 +5,7 @@ missing (the Fast & Furious cars/weapons DDL 2.6 never shipped). Two modes:
 
   weapons (default) -> fills missing item detailImages into android/.../assets/items/  (as .webp)
   cars              -> replaces blank SILHOUETTE car sprites in assets/cars/           (as .png)
+  ui                -> carves the 4.0.4 restyle chrome (nebula bg, gradient, HUD overlay) to assets/ui/
 
 Why this works without gdsdecomp/Ghidra: 4.0.4 imports these textures as CompressedTexture2D with
 "vram_texture": false, so each assets/.godot/imported/*.ctex embeds a lossless WebP blob (not a
@@ -14,13 +15,23 @@ to .png (via Pillow) so GameData's `<asset>-left-720.png` resolution is unchange
 
 Re-run after re-unzipping the apk if assets/ is wiped (assets/ is gitignored).
 
-Usage:  python3 tools/extract_ctex_art.py [weapons|cars|all] [path/to/Overdrive-4.0.4.apk]
+Usage:  python3 tools/extract_ctex_art.py [weapons|cars|ui|all] [path/to/Overdrive-4.0.4.apk]
 """
 import os, sys, json, re, struct, zipfile, tempfile, io
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 A = os.path.join(ROOT, "android/app/src/main/assets")
-MODE = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] in ("weapons", "cars", "all") else "all"
+MODE = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] in ("weapons", "cars", "ui", "all") else "all"
+
+# 4.0.4 restyle UI chrome: bundled-name (in assets/ui/) -> apk imported-texture source basename.
+# Godot flattens imported textures to <basename>.png-<hash>.ctex, so e.g. Assets/Background/base.png
+# is indexed as "base". Carved as .webp (Android BitmapFactory decodes WebP by content).
+UI_CARVE = {
+    "nebula_base": "base",            # the violet nebula menu background
+    "nebula_extended": "extended",    # wide-screen extension of the nebula
+    "simplegradient": "simplegradient",
+    "controller_overlay": "controller_overlay",  # in-race HUD frame (for the HUD rebuild)
+}
 APK = next((a for a in sys.argv[1:] if a.endswith(".apk")), os.path.join(ROOT, "reference/ddl404/Overdrive-4.0.4.apk"))
 
 
@@ -86,6 +97,37 @@ def silhouette_cars():
     return out
 
 
+def carve_ui(idx):
+    """Carve the restyle UI chrome into assets/ui/ as .webp:
+    - the named UI_CARVE chrome (nebula, gradient, controller overlay),
+    - every vehicle logo  (ui_logo_*  -> assets/ui/),
+    - every loot-box badge (Loot_*    -> assets/ui/loot/).
+    """
+    n = 0
+    for out, src in UI_CARVE.items():
+        if src in idx:
+            blob = carve_webp(open(idx[src], "rb").read())
+            if blob:
+                open(f"{A}/ui/{out}.webp", "wb").write(blob)
+                n += 1
+            else:
+                print(f"  ui: '{src}' is GPU-compressed (not lossless WebP) — skipped")
+    families = 0
+    os.makedirs(f"{A}/ui/loot", exist_ok=True)
+    for src, path in idx.items():
+        if src.startswith("ui_logo_"):
+            dest = f"{A}/ui/{src}.webp"
+        elif src.startswith("Loot_"):
+            dest = f"{A}/ui/loot/{src}.webp"
+        else:
+            continue
+        blob = carve_webp(open(path, "rb").read())
+        if blob:
+            open(dest, "wb").write(blob)
+            families += 1
+    print(f"ui: carved {n}/{len(UI_CARVE)} chrome + {families} logo/loot assets -> assets/ui/")
+
+
 def main():
     idx = index_ctex(APK)
     if MODE in ("weapons", "all"):
@@ -114,6 +156,8 @@ def main():
                     im = Image.open(big).convert("RGBA")
                     im.resize((420, round(im.height * 420 / im.width)), Image.LANCZOS).save(f"{A}/cars/{src}.png"); n += 1
         print(f"cars: replaced {n}/{len(sil)} silhouettes (run twice so 720s exist before 420 downscale)")
+    if MODE in ("ui", "all"):
+        carve_ui(idx)
 
 
 if __name__ == "__main__":

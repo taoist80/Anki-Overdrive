@@ -16,6 +16,7 @@ object MetaGame {
         val itemName: String,
         val rarity: String,
         val rarityColor: Long,
+        val badge: String? = null,   // carved 4.0.4 loot-crate art, e.g. "ui/loot/Loot_Weapons_Gold.webp"
     )
 
     /** Display name for an item id, via the real catalog. */
@@ -25,7 +26,22 @@ object MetaGame {
     fun rollLoot(vehicleName: String? = null): LootReward {
         val r = ItemRepository.rollLoot(vehicleName)
         val name = if (r.itemId.isBlank()) "" else ItemRepository.name(r.itemId)
-        return LootReward(r.coins, r.itemId, name, r.rarity, r.rarityColor)
+        return LootReward(r.coins, r.itemId, name, r.rarity, r.rarityColor, lootBadge(r.rarity, r.itemId))
+    }
+
+    /** Map a roll to one of the carved Bronze/Silver/Gold loot-crate badges by tier + reward family. */
+    private fun lootBadge(rarity: String, itemId: String): String {
+        val tier = when (rarity.uppercase()) {
+            "COMMON" -> "Bronze"
+            "RARE" -> "Silver"
+            else -> "Gold"   // EPIC / LEGENDARY
+        }
+        val family = when {
+            itemId.contains("Slot", true) || itemId.contains("Upgrade", true) -> "Upgrade"
+            itemId.isBlank() -> "Special"
+            else -> "Weapons"
+        }
+        return "ui/loot/Loot_${family}_$tier.webp"
     }
 
     data class UpgradeTrack(val key: String, val name: String, val baseCost: Int, val maxLevel: Int = 5)

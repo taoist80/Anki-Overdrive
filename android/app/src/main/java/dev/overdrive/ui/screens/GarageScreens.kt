@@ -124,13 +124,18 @@ fun VehicleDetailScreen(nav: OverdriveNav, carId: Int) {
         WireframeScreen(title = "Vehicle", onBack = { nav.back() }, subtitle = "Vehicle not found.")
         return
     }
+    val logo = rememberAsset(car.logoAsset)
 
     OverdriveScaffold(title = car.name, onBack = { nav.back() }) { mod ->
         Row(mod.padding(vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             // Hero card
             OverdrivePanel(Modifier.weight(1.2f).fillMaxHeight()) { inner ->
                 Column(inner.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
-                    RacingName(car.name, fontSize = 30, modifier = Modifier.align(Alignment.Start))
+                    if (logo != null) {
+                        Image(logo, car.name, Modifier.height(40.dp).align(Alignment.Start), contentScale = ContentScale.Fit)
+                    } else {
+                        RacingName(car.name, fontSize = 30, modifier = Modifier.align(Alignment.Start))
+                    }
                     Text(car.category.label.uppercase(), fontFamily = font, color = colors.gold,
                         fontSize = 12.sp, letterSpacing = 1.5.sp, modifier = Modifier.align(Alignment.Start).padding(top = 2.dp))
                     Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
@@ -467,7 +472,10 @@ fun GarageItemsScreen(nav: OverdriveNav) {
             inv.entries.sortedByDescending { it.value }.forEach { (id, count) ->
                 OverdrivePanel(Modifier.fillMaxWidth()) { inner ->
                     Row(inner.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(MetaGame.itemName(id), fontFamily = font, color = colors.textPrimary, fontSize = 16.sp)
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            WeaponGlyph(id, size = 40)
+                            Text(MetaGame.itemName(id), fontFamily = font, color = colors.textPrimary, fontSize = 16.sp)
+                        }
                         Text("×$count", fontFamily = font, color = colors.gold, fontSize = 15.sp, fontWeight = FontWeight.Bold)
                     }
                 }

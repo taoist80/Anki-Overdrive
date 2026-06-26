@@ -3,6 +3,7 @@ package dev.overdrive.nav
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -29,12 +30,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.overdrive.ui.components.PrimaryButton
 import dev.overdrive.ui.theme.OverdriveTheme
+import dev.overdrive.ui.theme.rememberAsset
 
 /**
  * The Foreground modal layer from the original NavigationController (Background / NavStack /
@@ -49,6 +52,7 @@ sealed interface Overlay {
         val itemName: String,
         val rarity: String,
         val rarityColor: Long,
+        val badge: String? = null,   // carved 4.0.4 loot-crate art (ui/loot/Loot_*)
     ) : Overlay
 
     /** Game mutator / rules picker (MutatorModalViewController). */
@@ -109,6 +113,7 @@ fun OverlayHost(controller: OverlayController) {
                     title = "LOOT DROP",
                     accentTitle = "★ ${o.rarity} ★",
                     accentColor = o.rarityColor,
+                    badgeImage = o.badge,
                     message = "+${o.coins} coins" + if (o.itemName.isNotBlank()) "\n${o.itemName}" else "",
                     primaryLabel = "COLLECT",
                     onPrimary = {
@@ -157,10 +162,12 @@ private fun OverlayCard(
     onPrimary: () -> Unit,
     accentTitle: String? = null,
     accentColor: Long? = null,
+    badgeImage: String? = null,
 ) {
     val colors = OverdriveTheme.colors
     val font = OverdriveTheme.font
     val accent = accentColor?.let { Color(it) } ?: colors.gold
+    val badge = rememberAsset(badgeImage)
     Column(
         Modifier
             .widthIn(max = 460.dp)
@@ -173,8 +180,12 @@ private fun OverlayCard(
         Text(title.uppercase(), fontFamily = font, color = colors.textPrimary, fontSize = 24.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
         if (accentTitle != null) {
             Spacer(Modifier.height(8.dp))
-            Box(Modifier.size(width = 120.dp, height = 120.dp).clip(RoundedCornerShape(8.dp)).background(colors.barEmpty), contentAlignment = Alignment.Center) {
-                Text("◆", color = accent, fontSize = 56.sp)
+            if (badge != null) {
+                Image(badge, null, Modifier.size(width = 150.dp, height = 150.dp), contentScale = ContentScale.Fit)
+            } else {
+                Box(Modifier.size(width = 120.dp, height = 120.dp).clip(RoundedCornerShape(8.dp)).background(colors.barEmpty), contentAlignment = Alignment.Center) {
+                    Text("◆", color = accent, fontSize = 56.sp)
+                }
             }
             Spacer(Modifier.height(8.dp))
             Text(accentTitle, fontFamily = font, color = accent, fontSize = 18.sp, fontWeight = FontWeight.Bold)

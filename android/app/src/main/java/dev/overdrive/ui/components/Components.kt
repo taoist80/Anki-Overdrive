@@ -36,12 +36,15 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -58,19 +61,19 @@ data class NavAction(
 enum class ButtonAccent { Blue, Gold, Orange, Outline }
 
 /**
- * Full-bleed Overdrive backdrop — the 4.0.4 violet nebula, painted procedurally (layered radial
- * "clouds" + a vignette) so it needs no bundled art and scales to any size. `heroImage`, if given,
- * overlays carved nebula art (Background/base.png) on top once it's extracted; the procedural ground
- * stays underneath as a guaranteed fallback. Edges stay dark for legibility.
+ * Full-bleed Overdrive backdrop — the 4.0.4 violet nebula. The carved 4.0.4 art (`nebula_base`) is a
+ * grayscale silk-cloud luminance texture; 4.0.4 colors it at runtime, so we tint it orchid and Screen-
+ * blend it over a procedural violet ground (layered radial clouds + vignette). The procedural ground
+ * is also the fallback when the art is absent or `heroImage = null` (e.g. race screens want it bare).
  */
 @Composable
 fun OverdriveBackground(
     modifier: Modifier = Modifier,
-    heroImage: String? = null,
+    heroImage: String? = "ui/nebula_base.webp",
     content: @Composable () -> Unit,
 ) {
     val colors = OverdriveTheme.colors
-    val hero = rememberAsset(heroImage)
+    val nebula = rememberAsset(heroImage)
     Box(
         modifier
             .fillMaxSize()
@@ -92,6 +95,16 @@ fun OverdriveBackground(
                 cloud(Color(0x5C9B3FB8), 0.74f, 0.40f, 0.62f) // hot magenta
                 cloud(Color(0x662A1240), 0.55f, 0.86f, 0.95f) // deep indigo, low
                 cloud(Color(0x184FB0FF), 0.84f, 0.14f, 0.55f) // cool holo glow, top-right
+                // real 4.0.4 nebula silk: tint the grayscale texture orchid, screen it over the ground
+                nebula?.let {
+                    drawImage(
+                        image = it,
+                        dstSize = IntSize(w.toInt(), h.toInt()),
+                        colorFilter = ColorFilter.tint(Color(0xFFB44DD6), BlendMode.Modulate),
+                        blendMode = BlendMode.Screen,
+                        alpha = 0.9f,
+                    )
+                }
                 drawRect( // vignette: dark edges, keeps text legible over the bright center
                     Brush.radialGradient(
                         listOf(Color.Transparent, Color(0xCC0C0617)),
@@ -101,7 +114,6 @@ fun OverdriveBackground(
                 )
             }
     ) {
-        if (hero != null) Image(hero, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alpha = 0.6f)
         content()
     }
 }

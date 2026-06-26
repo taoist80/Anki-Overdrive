@@ -572,7 +572,7 @@ fun RaceResultsScreen(nav: OverdriveNav, campaignMissionId: String) {
                 PrimaryButton("Open Loot", {
                     val playerVehicle = engine.state.cars.firstOrNull { it.isPlayer }?.let { carName(it.modelId, it.name) }
                     val r = MetaGame.rollLoot(playerVehicle)   // car-eligible loot when we know the player's car
-                    nav.showOverlay(Overlay.LootReveal(r.coins, r.itemId, r.itemName, r.rarity, r.rarityColor))
+                    nav.showOverlay(Overlay.LootReveal(r.coins, r.itemId, r.itemName, r.rarity, r.rarityColor, r.badge))
                 }, Modifier.weight(1f), ButtonAccent.Gold)
                 if (isCampaign) PrimaryButton("Next Mission", { nav.go(Routes.CampaignGraph) }, Modifier.weight(1f), ButtonAccent.Blue)
                 else PrimaryButton("Rematch", { nav.go(Routes.MatchSetup()) }, Modifier.weight(1f), ButtonAccent.Outline)

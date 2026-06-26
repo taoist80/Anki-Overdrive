@@ -1,5 +1,6 @@
 package dev.overdrive.ui.screens
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -25,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -34,6 +36,7 @@ import dev.overdrive.nav.Routes
 import dev.overdrive.ui.components.OverdriveScaffold
 import dev.overdrive.ui.components.RacingName
 import dev.overdrive.ui.theme.OverdriveTheme
+import dev.overdrive.ui.theme.rememberAsset
 
 /**
  * The three 4.0.4 main-menu hubs reached from [HomeScreen] (Garage is its own top-level entry and
@@ -47,15 +50,12 @@ fun SinglePlayerScreen(nav: OverdriveNav) {
     OverdriveScaffold(title = "Single Player", onBack = { nav.back() }) { mod ->
         val colors = OverdriveTheme.colors
         Row(mod.padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            HubCard("Campaign", "Earn stars, unlock chapters", colors.blue, Modifier.weight(1f)) {
-                nav.go(Routes.CampaignGraph)
-            }
-            HubCard("Open Play", "Quick race or battle — your rules", colors.gold, Modifier.weight(1f)) {
-                nav.go(Routes.OpenPlayGraph)
-            }
-            HubCard("Test Track", "Free drive, no scoring", colors.success, Modifier.weight(1f)) {
-                nav.go(Routes.TracksGraph)
-            }
+            HubCard("Campaign", "Earn stars, unlock chapters", colors.blue,
+                "ui/ui_selectMode_tournament.png", Modifier.weight(1f)) { nav.go(Routes.CampaignGraph) }
+            HubCard("Open Play", "Quick race or battle — your rules", colors.gold,
+                "ui/ui_selectMode_openPlay.png", Modifier.weight(1f)) { nav.go(Routes.OpenPlayGraph) }
+            HubCard("Test Track", "Free drive, no scoring", colors.success,
+                "ui/ui_selectMode_practice.png", Modifier.weight(1f)) { nav.go(Routes.TracksGraph) }
         }
     }
 }
@@ -110,9 +110,17 @@ fun MultiplayerScreen(nav: OverdriveNav) {
 // ---- building blocks --------------------------------------------------------
 
 @Composable
-private fun HubCard(name: String, desc: String, accent: Color, modifier: Modifier, onClick: () -> Unit) {
+private fun HubCard(
+    name: String,
+    desc: String,
+    accent: Color,
+    image: String?,
+    modifier: Modifier,
+    onClick: () -> Unit,
+) {
     val colors = OverdriveTheme.colors
     val font = OverdriveTheme.font
+    val art = rememberAsset(image)
     val shape = RoundedCornerShape(14.dp)
     Box(
         modifier
@@ -124,6 +132,15 @@ private fun HubCard(name: String, desc: String, accent: Color, modifier: Modifie
             .border(1.dp, colors.panelBorder, shape)
             .clickable(onClick = onClick),
     ) {
+        // full-bleed illustration, then a bottom scrim so the label band stays legible
+        if (art != null) {
+            Image(art, name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            Box(
+                Modifier.fillMaxSize().background(
+                    Brush.verticalGradient(0.35f to Color.Transparent, 1f to Color(0xE6120A22))
+                )
+            )
+        }
         Column(
             Modifier.fillMaxSize().padding(18.dp),
             verticalArrangement = Arrangement.Bottom,
