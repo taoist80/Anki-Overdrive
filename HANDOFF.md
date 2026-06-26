@@ -166,6 +166,18 @@ Design spec artifact (4.0.4 layout, app palette, real data): published this sess
      → tint-per-chapter is faithful. • **Data mismatch:** our campaign is the Drive **Gen2** ladder (27 opponents);
      only ~5–6 (Metro/CrashBot/Brick/Charge/Vice) match a 3.4.0 portrait, so **full per-mission portraits = Phase-10
      story-parity remap** (remap campaign to the Overdrive/F&F commanders, or load the F&F `foxtrot.xapk` campaign).
+
+   **GENERATED ART — DONE (`tools/generate_art.py`, Bedrock, build + on-device verified).** The campaign's 27
+   missions resolve to only **9 distinct opponents**; 3 (Metro/Charge/Vice) had 3.4.0 portraits, the other 6
+   (Cam/Crush/Fuzz/Gearswitch/Rev/Sever) did not → **generated them**, so EVERY mission now has a face.
+   • **Model determination (via MCP gateway / AWS docs):** Amazon **Nova Canvas + Titan are LEGACY-gated** in
+     the dev account (acct 999776382415); the **Stability suite is ACTIVE in us-west-2**. Chose **Stable Image
+     Ultra** (`stability.stable-image-ultra-v1:1`) — highest quality, gaming is a named use case. (SD3.5 Large
+     is the same engine; `stable-image-style-guide`/`style-transfer` are the consistency-control tools for later;
+     `remove-background` needs an inference profile, not on-demand — so portraits bake a dark bg instead.)
+   • `generate_art.py commanders` → 6 painted-style busts → `ui/commanders/<name>.png` (512px, matched to the
+     extracted set via a flat cel-shaded prompt + photoreal/3D/scene negatives; user signed off on a 2-image test).
+     Wired automatically (CampaignScreens keys portraits by friendly-name). Uses ambient AWS SSO profile.
    **REMAINING:** (a) in-race **HUD rebuild** (hardest; `controller_overlay.webp` already carved — see below).
    (b) Stub screens still text-only (Profile/avatars, Medals, Store, Tracks, CoinShop packs) — avatars/medals have
    **no art in 4.0.4 or 3.4.0 bundles** (ProfileMedals could reuse `Loot_*`); 3.4.0 `commanderdriver1/2`/`pa` could
