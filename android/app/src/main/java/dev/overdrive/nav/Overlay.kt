@@ -109,11 +109,11 @@ fun OverlayHost(controller: OverlayController) {
                     title = "LOOT DROP",
                     accentTitle = "★ ${o.rarity} ★",
                     accentColor = o.rarityColor,
-                    message = "+${o.coins} coins\n${o.itemName}",
+                    message = "+${o.coins} coins" + if (o.itemName.isNotBlank()) "\n${o.itemName}" else "",
                     primaryLabel = "COLLECT",
                     onPrimary = {
                         dev.overdrive.profile.ProfileRepository.addCoins(ctx, o.coins)
-                        dev.overdrive.profile.ProfileRepository.addItem(ctx, o.itemId)
+                        if (o.itemId.isNotBlank()) dev.overdrive.profile.ProfileRepository.addItem(ctx, o.itemId)
                         controller.dismiss()
                     },
                 )

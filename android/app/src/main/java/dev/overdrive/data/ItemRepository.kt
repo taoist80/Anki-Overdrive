@@ -138,7 +138,7 @@ object ItemRepository {
         val pool = catalog.filter { it.level <= maxLevel && it.usableBy(vehicleName) }
             .ifEmpty { catalog.filter { it.level <= maxLevel } }
             .ifEmpty { catalog }
-        val item = pool.randomOrNull()?.id ?: "coins"
+        val item = pool.randomOrNull()?.id ?: ""   // "" = coins-only reward (no item granted)
         return LootResult(coins, item, rarity, color)
     }
 

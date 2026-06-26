@@ -24,7 +24,8 @@ object MetaGame {
     /** Roll a loot box: rarity-weighted coins + a real catalog item (car-eligible if [vehicleName] set). */
     fun rollLoot(vehicleName: String? = null): LootReward {
         val r = ItemRepository.rollLoot(vehicleName)
-        return LootReward(r.coins, r.itemId, ItemRepository.name(r.itemId), r.rarity, r.rarityColor)
+        val name = if (r.itemId.isBlank()) "" else ItemRepository.name(r.itemId)
+        return LootReward(r.coins, r.itemId, name, r.rarity, r.rarityColor)
     }
 
     data class UpgradeTrack(val key: String, val name: String, val baseCost: Int, val maxLevel: Int = 5)
