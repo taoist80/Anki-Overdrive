@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import dev.overdrive.data.model.GameItem
 import dev.overdrive.net.BackendClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -36,6 +37,8 @@ data class Profile(
     fun starsFor(missionId: String): Int = missions[missionId]?.completedTaskIds?.size ?: 0
     fun completedTasks(missionId: String): Set<String> = missions[missionId]?.completedTaskIds ?: emptySet()
     fun itemCount(itemId: String): Int = inventory[itemId] ?: 0
+    /** Whether the player owns [item]: level-1 weapons are free starters; higher levels must be looted/bought. */
+    fun owns(item: GameItem): Boolean = item.level <= 1 || (inventory[item.id] ?: 0) > 0
     fun upgradeLevel(key: String): Int = vehicleUpgrades[key] ?: 0
     /** The item equipped in [bay] (e.g. "attack"/"support") of car [carId], or null. */
     fun equipped(carId: Int, bay: String): String? = loadout["$carId:$bay"]

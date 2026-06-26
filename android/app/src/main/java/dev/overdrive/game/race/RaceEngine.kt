@@ -12,6 +12,7 @@ import dev.overdrive.CarManager
 import dev.overdrive.GameData
 import dev.overdrive.Protocol
 import dev.overdrive.data.model.Bay
+import dev.overdrive.game.MetaGame
 import dev.overdrive.profile.ProfileRepository
 
 /** Live state for one car in a race, driven by 0x27 position telemetry. */
@@ -66,6 +67,7 @@ class RaceEngine(private val mgr: CarManager) {
     companion object {
         private const val TAG = "OverdriveX"
         const val MAX_SPEED = 900       // mm/s at full throttle (curves auto-cap below)
+        const val SPEED_CEIL = 1000     // hard straight-line ceiling incl. SPEED upgrade (hardware-safe)
         const val CURVE_SPEED = 450     // mm/s ceiling while on a curve piece
         const val PLAYER_START = 500    // mm/s default when the race starts
         const val AI_BASE = 440         // mm/s base for AI rivals (varied per car)
@@ -92,6 +94,7 @@ class RaceEngine(private val mgr: CarManager) {
     private var startedAt = 0L
     private var playerAddr: String? = null
     private var designatedPlayer: String? = null
+    private var playerSpeedMult = 1f         // player car's SPEED upgrade (straight-line only)
     private var scanning = false
     private var scanComplete = false
     private var scanStartedAt = 0L
@@ -184,7 +187,16 @@ class RaceEngine(private val mgr: CarManager) {
         val playerCarId = tele[playerAddr]?.modelId ?: -1
         // RACE and TIME TRIAL are weapon-free; all other modes (battle/battle-race/one-shot/koth/takeover) arm weapons.
         val weaponsEnabled = state.mode.lowercase().let { it != "race" && !it.startsWith("time") }
-        combat.init(roster, ProfileRepository.profile.loadoutFor(playerCarId), weaponsEnabled)
+        // Per-car garage upgrades → in-race multipliers (speed handled here, the rest by combat).
+        val prof = ProfileRepository.profile
+        fun lvl(track: String) = prof.upgradeLevel("$playerCarId:$track")
+        playerSpeedMult = MetaGame.speedMult(lvl("speed"))
+        val mods = Combat.PlayerMods(
+            damageMult = MetaGame.damageMult(lvl("weapons")),
+            defenseMult = MetaGame.defenseMult(lvl("defense")),
+            energyMult = MetaGame.energyMult(lvl("energy")),
+        )
+        combat.init(roster, prof.loadoutFor(playerCarId), weaponsEnabled, mods)
         Log.i(TAG, "Race.start: driving ${tele.size} cars, targets=$targetSpeed")
         publish(running = true)
         main.removeCallbacks(control)
@@ -228,8 +240,10 @@ class RaceEngine(private val mgr: CarManager) {
     /** Curve-aware + combat-aware target: cap on curves, then scale by combat (boost/tractor/disabled). */
     private fun effectiveSpeed(addr: String, pieceId: Int): Int {
         if (combat.isDisabled(addr)) return 0
-        val base = targetSpeed[addr] ?: return 0
-        val capped = if (RoadPieces.isCurve(pieceId)) minOf(base, CURVE_SPEED) else base
+        val raw = targetSpeed[addr] ?: return 0
+        // Player's SPEED upgrade boosts straight-line speed only; curves stay hard-capped (hardware safety).
+        val base = if (addr == playerAddr) (raw * playerSpeedMult).toInt() else raw
+        val capped = if (RoadPieces.isCurve(pieceId)) minOf(base, CURVE_SPEED) else minOf(base, SPEED_CEIL)
         return (capped * combat.speedFactor(addr)).toInt()
     }
 

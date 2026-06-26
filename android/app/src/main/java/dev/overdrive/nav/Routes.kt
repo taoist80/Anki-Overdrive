@@ -18,7 +18,9 @@ object Routes {
     @Serializable object GarageGraph
     @Serializable object GarageHome
     @Serializable data class VehicleDetail(val carId: Int = -1)
-    @Serializable object GarageUpgrades
+    @Serializable data class WeaponLoadout(val carId: Int = -1)
+    @Serializable data class WeaponPicker(val carId: Int = -1, val bay: String = "attack")
+    @Serializable data class GarageUpgrades(val carId: Int = -1)
     @Serializable object GarageItems
     @Serializable object GarageDailySpecials
     @Serializable object ItemShop

@@ -51,24 +51,36 @@ class Combat {
         val disabled: Boolean get() = SystemClock.elapsedRealtime() < disabledUntil
     }
 
+    /** The player car's garage-upgrade multipliers (1f = no upgrade). AI rivals always use 1f. */
+    data class PlayerMods(val damageMult: Float = 1f, val defenseMult: Float = 1f, val energyMult: Float = 1f)
+
     private val cars = LinkedHashMap<String, CombatCar>()
     var running = false; private set
     /** Whether this game mode allows weapons (RACE / TIME TRIAL are weapon-free). */
     var weaponsEnabled = true; private set
+    private var playerMods = PlayerMods()
 
     /** Snapshot the race roster: equip the player's loadout, AI rivals a sensible default. */
-    fun init(roster: List<Triple<String, Boolean, String?>>, playerLoadout: Map<String, String>, weaponsEnabled: Boolean) {
+    fun init(
+        roster: List<Triple<String, Boolean, String?>>,
+        playerLoadout: Map<String, String>,
+        weaponsEnabled: Boolean,
+        playerMods: PlayerMods = PlayerMods(),
+    ) {
         cars.clear()
         this.weaponsEnabled = weaponsEnabled
+        this.playerMods = playerMods
         roster.forEach { (addr, isPlayer, vehName) ->
             val c = CombatCar(addr, isPlayer, vehName)
+            // Per-car defaults are real, art-backed weapons (the player's equipped loadout still wins).
+            val defaults = ItemRepository.defaultLoadout(vehName)
             if (isPlayer) {
-                c.equipped[Bay.ATTACK] = playerLoadout["attack"] ?: DEFAULT_ATTACK
-                c.equipped[Bay.SUPPORT] = playerLoadout["support"] ?: DEFAULT_SUPPORT
+                c.equipped[Bay.ATTACK] = playerLoadout["attack"] ?: defaults["attack"] ?: DEFAULT_ATTACK
+                c.equipped[Bay.SUPPORT] = playerLoadout["support"] ?: defaults["support"] ?: DEFAULT_SUPPORT
                 playerLoadout["special"]?.let { c.equipped[Bay.SPECIAL] = it }
             } else {
-                c.equipped[Bay.ATTACK] = DEFAULT_ATTACK
-                c.equipped[Bay.SUPPORT] = DEFAULT_SUPPORT
+                c.equipped[Bay.ATTACK] = defaults["attack"] ?: DEFAULT_ATTACK
+                c.equipped[Bay.SUPPORT] = defaults["support"] ?: DEFAULT_SUPPORT
             }
             cars[addr] = c
         }
@@ -161,7 +173,9 @@ class Combat {
         val t = cars[targetAddr] ?: return
         if (t.disabled) return
         var dmg = item.damagePerSec.toFloat()   // real per-hit damage; 0 for pure-effect weapons
+        if (from.isPlayer) dmg *= playerMods.damageMult   // player's WEAPONS upgrade
         if (now < t.shieldUntil) dmg *= SHIELD_BLOCK
+        if (t.isPlayer) dmg *= playerMods.defenseMult     // player's DEFENSE upgrade (incoming)
         if (dmg > 0f) t.health -= dmg
         // Apply the weapon's status effects to the target for their configured duration.
         for (effId in effectsOf(item)) {
@@ -218,8 +232,11 @@ class Combat {
             if (c.effects.isNotEmpty()) c.effects.removeAll { now >= it.untilMs }
             // respawn
             if (c.health <= 0f && now >= c.disabledUntil) c.health = MAX_HEALTH
-            // energy regen (not while disabled)
-            if (!c.disabled) c.energy = (c.energy + ENERGY_REGEN_PER_S * dt).coerceAtMost(MAX_ENERGY)
+            // energy regen (not while disabled); player's ENERGY upgrade speeds it up
+            if (!c.disabled) {
+                val regen = ENERGY_REGEN_PER_S * (if (c.isPlayer) playerMods.energyMult else 1f)
+                c.energy = (c.energy + regen * dt).coerceAtMost(MAX_ENERGY)
+            }
             // AI auto-fire at whoever's near
             if (!c.isPlayer && !c.disabled && now - c.lastAiFireAt >= AI_FIRE_PERIOD_MS) {
                 c.lastAiFireAt = now

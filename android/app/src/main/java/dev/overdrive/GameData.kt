@@ -3,6 +3,9 @@ package dev.overdrive
 import android.content.Context
 import org.json.JSONObject
 
+/** The three roster tabs the original car-select groups vehicles under. */
+enum class CarCategory(val label: String) { SUPERCARS("Supercars"), SUPERTRUCKS("Supertrucks"), DRIVE("Drive") }
+
 /** A car definition, loaded from the original vehicleTypes.json (reused as-is). */
 data class CarType(
     val id: Int,
@@ -12,6 +15,7 @@ data class CarType(
     val attackBays: Int,
     val supportBays: Int,
     val spriteFile: String?,   // a file in assets/cars/, or null
+    val category: CarCategory = CarCategory.SUPERCARS,
 )
 
 /** Loads the reused Overdrive content (car catalog, etc.) from bundled assets/gamedata. */
@@ -42,9 +46,20 @@ object GameData {
                     ?: sprites.firstOrNull { it.startsWith("$a-", true) }
                     ?: sprites.firstOrNull { it.equals("$a.png", true) }
             }
-            out.add(CarType(id, name, asset, series, atk, sup, sprite))
+            out.add(CarType(id, name, asset, series, atk, sup, sprite, categoryOf(v, name)))
         }
         cars = out.sortedBy { it.id }
+    }
+
+    /**
+     * Map a vehicle to its car-select tab. vehicleTypes.json has no explicit category field, so we
+     * derive it: Gen-1 cars carry `voice_id="Gen1"` (Drive); the two supertruck chassis `extends`
+     * 102/103, plus Mammoth (the International MXT monster truck); everything else is a Supercar.
+     */
+    private fun categoryOf(v: JSONObject, name: String): CarCategory = when {
+        v.optStringOrNull("voice_id") == "Gen1" -> CarCategory.DRIVE
+        v.optInt("extends", -1) in intArrayOf(102, 103) || name.equals("Mammoth", true) -> CarCategory.SUPERTRUCKS
+        else -> CarCategory.SUPERCARS
     }
 
     /** Resolve a car by its Anki model id (as broadcast in the BLE advertisement). */

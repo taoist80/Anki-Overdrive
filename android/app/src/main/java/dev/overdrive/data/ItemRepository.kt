@@ -116,8 +116,9 @@ object ItemRepository {
     fun imageAsset(id: String?): String? {
         val it = item(id) ?: return null
         it.detailImage?.let { d ->
-            if ("$d-large.png" in bundledImages) return "items/$d-large.png"
-            if ("$d-medium.png" in bundledImages) return "items/$d-medium.png"
+            // PNG (from the DDL extraction) or WebP (carved from 4.0.4 .ctex), large then medium.
+            for (name in listOf("$d-large.png", "$d-large.webp", "$d-medium.png", "$d-medium.webp"))
+                if (name in bundledImages) return "items/$name"
         }
         it.iconImage?.let { ic ->
             if ("$ic.png" in bundledImages) return "items/$ic.png"
@@ -135,9 +136,58 @@ object ItemRepository {
     fun description(id: String?): String =
         item(id)?.descKey?.let { strings.opt(it) } ?: ""
 
-    /** Resolved items in a bay that the given car may equip (empty restriction = universal). */
+    /** Whether an item has a *resolvable, non-blank* localized name (some rows resolve to ""). */
+    fun named(item: GameItem): Boolean = strings.opt(item.nameKey)?.isNotBlank() == true
+
+    /**
+     * A real, player-equippable weapon: it has a non-blank name AND a defined detail image. The
+     * detail-image requirement drops the internal `NukeParent*` template family (universal weapons
+     * with `image_detail == null` that otherwise show a generic class-icon placeholder and duplicate
+     * the real Gen1/car-specific weapons). `ZFXDisable` and the blank `NukeParentShortRange*` rows
+     * fail the name check.
+     */
+    fun equippable(item: GameItem): Boolean = named(item) && item.detailImage != null
+
+    /**
+     * Real, equippable weapons in [bay] the given car may equip (empty restriction = universal),
+     * lowest level first.
+     */
     fun equippableFor(bay: Bay, vehicleName: String?): List<GameItem> =
-        catalog.filter { it.bay == bay && it.usableBy(vehicleName) }.sortedBy { it.level }
+        catalog.filter { it.bay == bay && equippable(it) && it.usableBy(vehicleName) }
+            .sortedBy { it.level }
+
+    /** True if this item has a bundled detail render (`-large`/`-medium`), not just a hitzone icon. */
+    fun hasDetailArt(id: String?): Boolean {
+        val d = item(id)?.detailImage ?: return false
+        return "$d-large.png" in bundledImages || "$d-medium.png" in bundledImages
+    }
+
+    /**
+     * The starter weapon for [bay] on a car: the *lowest-level* equippable (always a level-1 starter,
+     * which is free/owned), preferring one with real canister art so the HUD shows a render not a
+     * generic icon. Used as the default loadout and as the implicit equip when a bay is untouched.
+     */
+    fun defaultItem(bay: Bay, vehicleName: String?): GameItem? {
+        val pool = equippableFor(bay, vehicleName)
+        val minLevel = pool.firstOrNull()?.level ?: return null
+        val lowest = pool.filter { it.level == minLevel }
+        return lowest.firstOrNull { hasDetailArt(it.id) } ?: lowest.firstOrNull()
+    }
+
+    /**
+     * Coin price to buy an item: its catalog [GameItem.cost] when set, else a level-scaled fallback.
+     * Level-1 weapons are free starters (owned by default) — see [dev.overdrive.profile] ownership.
+     */
+    fun itemPrice(item: GameItem): Int = if (item.cost > 0) item.cost else 200 * item.level * item.level
+
+    /**
+     * The implicit starting loadout for a car (attack + support) used when the profile has none —
+     * so a brand-new profile and AI rivals always fire a real, art-backed weapon out of the box.
+     */
+    fun defaultLoadout(vehicleName: String?): Map<String, String> = buildMap {
+        defaultItem(Bay.ATTACK, vehicleName)?.let { put("attack", it.id) }
+        defaultItem(Bay.SUPPORT, vehicleName)?.let { put("support", it.id) }
+    }
 
     // ---- Loot ----------------------------------------------------------------
     data class LootResult(val coins: Int, val itemId: String, val rarity: String, val rarityColor: Long)

@@ -53,6 +53,8 @@ import dev.overdrive.ui.screens.TrackScanScreen
 import dev.overdrive.ui.screens.TracksHomeScreen
 import dev.overdrive.ui.screens.VehicleDetailScreen
 import dev.overdrive.ui.screens.VehicleSelectScreen
+import dev.overdrive.ui.screens.WeaponLoadoutScreen
+import dev.overdrive.ui.screens.WeaponPickerScreen
 
 /**
  * The full navigation graph. Each storyboard flow is a nested [navigation] graph so flow-scoped
@@ -69,7 +71,12 @@ fun OverdriveNavHost(nav: OverdriveNav) {
         navigation<Routes.GarageGraph>(startDestination = Routes.GarageHome) {
             composable<Routes.GarageHome> { GarageHomeScreen(nav) }
             composable<Routes.VehicleDetail> { VehicleDetailScreen(nav, it.toRoute<Routes.VehicleDetail>().carId) }
-            composable<Routes.GarageUpgrades> { GarageUpgradesScreen(nav) }
+            composable<Routes.WeaponLoadout> { WeaponLoadoutScreen(nav, it.toRoute<Routes.WeaponLoadout>().carId) }
+            composable<Routes.WeaponPicker> {
+                val a = it.toRoute<Routes.WeaponPicker>()
+                WeaponPickerScreen(nav, a.carId, a.bay)
+            }
+            composable<Routes.GarageUpgrades> { GarageUpgradesScreen(nav, it.toRoute<Routes.GarageUpgrades>().carId) }
             composable<Routes.GarageItems> { GarageItemsScreen(nav) }
             composable<Routes.GarageDailySpecials> { GarageDailySpecialsScreen(nav) }
             composable<Routes.ItemShop> { ItemShopScreen(nav) }

@@ -35,6 +35,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -44,6 +45,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.overdrive.AnkiCarManagerHolder
+import dev.overdrive.CarCategory
 import dev.overdrive.CarState
 import dev.overdrive.GameData
 import dev.overdrive.data.ContentRepository
@@ -126,7 +128,12 @@ fun VehicleSelectScreen(nav: OverdriveNav) = WireframeScreen(
     actions = listOf(NavAction("To Match Setup", { nav.go(Routes.MatchSetup()) }, ButtonAccent.Blue)),
 )
 
-/** Real BLE: scan, connect cars (up to 4), then arm the race engine. */
+/**
+ * Match Setup (4.0.4 full-roster car select): every car shown under Supercars / Supertrucks / Drive
+ * tabs. Connected cars are selectable (tap to set P1); nearby cars connect on tap; the rest read
+ * "POWER ON". Connection state is matched to the live BLE manager by `modelId`. Below the roster:
+ * the laps-to-finish stepper + the Scan Track CTA (enabled once a car is connected).
+ */
 @Composable
 fun MatchSetupScreen(nav: OverdriveNav, mode: String, campaignMissionId: String) {
     val ctx = LocalContext.current
@@ -137,77 +144,78 @@ fun MatchSetupScreen(nav: OverdriveNav, mode: String, campaignMissionId: String)
     remember { GameData.load(ctx); 0 }
     var playerAddr by remember { mutableStateOf<String?>(null) }
     var lapCount by remember { mutableStateOf(3) }
+    var tab by remember { mutableStateOf(CarCategory.SUPERCARS) }
 
-    OverdriveScaffold(title = "Match Setup", onBack = { nav.back() }) { mod ->
-        Column(mod, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    val connected = mgr.cars.filter { it.state != CarState.Disconnected }
+    val effectivePlayer = playerAddr ?: connected.firstOrNull()?.address
+    val roster = GameData.cars.filter { it.category == tab }
+    // Connected cars whose model didn't resolve to a catalog car — kept selectable so none are lost.
+    val unknownConnected = connected.filter { GameData.byModelId(it.modelId) == null }
+
+    OverdriveScaffold(
+        title = "Match Setup", onBack = { nav.back() },
+        right = { Text(if (mode.isNotBlank()) mode.uppercase() else "RACE", fontFamily = font, color = colors.gold, fontSize = 12.sp, letterSpacing = 1.5.sp) },
+    ) { mod ->
+        Column(mod, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                PrimaryButton(if (mgr.scanning) "Scanning…" else "Scan", { mgr.startScan() }, accent = ButtonAccent.Blue)
+                if (mgr.cars.isNotEmpty()) PrimaryButton("Disconnect", { mgr.disconnectAll() }, accent = ButtonAccent.Outline)
+                Spacer(Modifier.weight(1f))
+                Text("${connected.size}/${mgr.maxCars} connected", fontFamily = font, color = colors.textDim, fontSize = 12.sp)
+            }
             Text(
-                buildString {
-                    append("Power on your cars and place them on the track. Scan, then tap a car to connect (up to ${mgr.maxCars}). The first connected car is yours.")
-                    if (mode.isNotBlank()) append("\nMode: $mode")
-                    if (campaignMissionId.isNotBlank()) append("   ·   Mission: $campaignMissionId")
-                },
-                fontFamily = font, color = colors.textDim, fontSize = 13.sp,
+                "Tap a connected car to make it yours (P1). Tap a nearby car to connect it." +
+                    if (campaignMissionId.isNotBlank()) "   ·   Mission: $campaignMissionId" else "",
+                fontFamily = font, color = colors.textDim, fontSize = 12.sp,
             )
 
-            // Connected cars — tap one to make it your car (P1)
-            val connected = mgr.cars.filter { it.state != CarState.Disconnected }
-            val effectivePlayer = playerAddr ?: connected.firstOrNull()?.address
-            if (connected.isNotEmpty()) {
-                Text("CONNECTED  ·  tap to set your car (P1)", fontFamily = font, color = colors.gold, fontSize = 12.sp, letterSpacing = 1.sp)
-                connected.forEach { c ->
-                    val isPlayer = c.address == effectivePlayer
-                    val shape = RoundedCornerShape(8.dp)
-                    OverdrivePanel(
-                        Modifier.fillMaxWidth()
-                            .then(if (isPlayer) Modifier.border(2.dp, colors.gold, shape) else Modifier)
-                            .clickable { playerAddr = c.address },
-                    ) { inner ->
-                        Row(inner.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                CarThumb(c.modelId)
-                                Spacer(Modifier.size(12.dp))
-                                Column {
-                                    Text((if (isPlayer) "P1 · " else "AI · ") + carName(c.modelId, c.name), fontFamily = font, color = if (isPlayer) colors.gold else colors.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                                    Text("${c.state}  ·  ${c.address.takeLast(5)}", fontFamily = font, color = colors.textDim, fontSize = 11.sp)
-                                }
-                            }
-                            val dot = if (c.state == CarState.Connected) colors.success else colors.gold
-                            Box(Modifier.size(12.dp).clip(CircleShape).background(dot))
-                        }
-                    }
+            // Category tabs
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                CarCategory.values().forEach { c ->
+                    CategoryTab(c.label, c == tab) { tab = c }
                 }
             }
 
-            // Scan control + found list
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                PrimaryButton(if (mgr.scanning) "Scanning…" else "Scan", { mgr.startScan() }, accent = ButtonAccent.Blue)
-                if (mgr.cars.isNotEmpty()) PrimaryButton("Disconnect All", { mgr.disconnectAll() }, accent = ButtonAccent.Outline)
-            }
-            mgr.found.forEach { d ->
-                OverdrivePanel(Modifier.fillMaxWidth().clickable { mgr.connect(d) }) { inner ->
-                    Row(inner.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            CarThumb(d.modelId)
-                            Spacer(Modifier.size(12.dp))
-                            Column {
-                                Text(carName(d.modelId, d.name), fontFamily = font, color = colors.textPrimary, fontSize = 15.sp)
-                                Text(d.address, fontFamily = font, color = colors.textDim, fontSize = 11.sp)
-                            }
-                        }
-                        Text("${d.rssi} dBm  ·  TAP", fontFamily = font, color = colors.blue, fontSize = 12.sp)
+            // The roster grid takes the remaining height; the stepper + CTA pin to the bottom.
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(150.dp),
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                contentPadding = PaddingValues(vertical = 4.dp),
+            ) {
+                items(roster, key = { it.id }) { car ->
+                    val conn = mgr.cars.firstOrNull { it.modelId == car.id && it.state != CarState.Disconnected }
+                    val found = mgr.found.firstOrNull { it.modelId == car.id }
+                    val connecting = conn != null && conn.state != CarState.Connected
+                    val (slot, detail) = when {
+                        conn != null && conn.address == effectivePlayer -> Slot.PLAYER to (if (connecting) "P1 · CONNECTING" else "P1 · YOU")
+                        conn != null -> Slot.CONNECTED to (if (connecting) "CONNECTING…" else "TAP TO SET P1")
+                        found != null -> Slot.NEARBY to "TAP TO CONNECT · ${found.rssi}dBm"
+                        else -> Slot.OFFLINE to "POWER ON"
                     }
+                    RosterCard(car.name, car.id, slot, detail) {
+                        when {
+                            conn != null -> playerAddr = conn.address
+                            found != null -> mgr.connect(found)
+                            else -> {}
+                        }
+                    }
+                }
+                items(unknownConnected, key = { it.address }) { c ->
+                    val slot = if (c.address == effectivePlayer) Slot.PLAYER else Slot.CONNECTED
+                    RosterCard(c.name.ifBlank { "Unknown Car" }, c.modelId, slot,
+                        if (slot == Slot.PLAYER) "P1 · YOU" else "TAP TO SET P1") { playerAddr = c.address }
                 }
             }
 
-            Spacer(Modifier.height(4.dp))
-            // Game settings: laps to finish (mirrors 4.0.4's LAP COUNT stepper)
+            // Laps-to-finish stepper (mirrors 4.0.4's LAP COUNT)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 Text("LAPS TO FINISH", fontFamily = font, color = colors.textDim, fontSize = 12.sp, letterSpacing = 1.sp)
                 ControlButton("–", colors.panelBorder, Modifier.size(40.dp)) { if (lapCount > 1) lapCount-- }
                 Text("$lapCount", fontFamily = font, color = colors.gold, fontSize = 22.sp, fontWeight = FontWeight.Bold)
                 ControlButton("+", colors.panelBorder, Modifier.size(40.dp)) { if (lapCount < 20) lapCount++ }
             }
-            Spacer(Modifier.height(4.dp))
             PrimaryButton(
                 "Scan Track",
                 {
@@ -221,6 +229,62 @@ fun MatchSetupScreen(nav: OverdriveNav, mode: String, campaignMissionId: String)
                 enabled = connected.isNotEmpty(),
             )
         }
+    }
+}
+
+/** Which roster slot a car occupies — drives its card's accent, dot, and tap behaviour. */
+private enum class Slot { PLAYER, CONNECTED, NEARBY, OFFLINE }
+
+@Composable
+private fun CategoryTab(label: String, selected: Boolean, onClick: () -> Unit) {
+    val colors = OverdriveTheme.colors
+    val font = OverdriveTheme.font
+    val shape = RoundedCornerShape(8.dp)
+    Box(
+        Modifier.clip(shape)
+            .background(if (selected) Color(0x22FFFFFF) else Color(0x0DFFFFFF))
+            .border(1.dp, if (selected) colors.gold.copy(alpha = 0.7f) else colors.panelBorder, shape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+    ) {
+        Text(label.uppercase(), fontFamily = font, color = if (selected) colors.textPrimary else colors.textDim,
+            fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+    }
+}
+
+/** One car in the roster grid. [modelId] resolves the thumbnail; [slot] sets the visual state. */
+@Composable
+private fun RosterCard(name: String, modelId: Int, slot: Slot, detail: String, onTap: () -> Unit) {
+    val colors = OverdriveTheme.colors
+    val font = OverdriveTheme.font
+    val shape = RoundedCornerShape(10.dp)
+    val accent = when (slot) {
+        Slot.PLAYER -> colors.gold
+        Slot.CONNECTED -> colors.success
+        Slot.NEARBY -> colors.blue
+        Slot.OFFLINE -> colors.panelBorder
+    }
+    val dim = slot == Slot.OFFLINE
+    Column(
+        Modifier.clip(shape)
+            .background(colors.panel.copy(alpha = if (dim) 0.35f else 0.75f))
+            .border(if (slot == Slot.PLAYER) 2.dp else 1.dp, accent.copy(alpha = if (dim) 0.4f else 0.8f), shape)
+            .alpha(if (dim) 0.6f else 1f)
+            .clickable(enabled = slot != Slot.OFFLINE, onClick = onTap)
+            .padding(10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopEnd) {
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { CarThumb(modelId) }
+            if (slot == Slot.PLAYER || slot == Slot.CONNECTED)
+                Box(Modifier.size(9.dp).clip(CircleShape).background(colors.success))
+            else if (slot == Slot.NEARBY)
+                Box(Modifier.size(9.dp).clip(CircleShape).background(colors.blue))
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(name.uppercase(), fontFamily = font, color = if (dim) colors.textDim else colors.textPrimary,
+            fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+        Text(detail, fontFamily = font, color = accent, fontSize = 9.sp, letterSpacing = 0.5.sp, maxLines = 1)
     }
 }
 

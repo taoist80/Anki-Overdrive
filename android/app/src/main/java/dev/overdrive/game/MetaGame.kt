@@ -42,4 +42,11 @@ object MetaGame {
 
     /** Profile key for a per-vehicle upgrade track. */
     fun upgradeKey(carId: Int, track: UpgradeTrack): String = "$carId:${track.key}"
+
+    // ---- Gameplay effect of each upgrade track (per level; maxLevel 5) -------------------
+    // These turn the garage upgrade levels into real in-race multipliers (read by RaceEngine/Combat).
+    fun speedMult(level: Int): Float = 1f + 0.05f * level            // +5%/lvl straight-line top speed
+    fun damageMult(level: Int): Float = 1f + 0.08f * level           // +8%/lvl weapon damage
+    fun defenseMult(level: Int): Float = (1f - 0.08f * level).coerceAtLeast(0.5f)  // -8%/lvl incoming
+    fun energyMult(level: Int): Float = 1f + 0.12f * level           // +12%/lvl energy regen
 }

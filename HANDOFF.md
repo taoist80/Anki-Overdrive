@@ -41,7 +41,8 @@ adb shell monkey -p dev.overdrive -c android.intent.category.LAUNCHER 1
   virtual; speed/lane modulation), health/energy/cooldowns/effects/disable, mode-gated (Race/TimeTrial
   weapon-free), HUD bay triggers.
 - **On-track fixes** (`d5d7071`,`6b4f989`,`f0b5479`,`7896e96`) — see below.
-- **Phase 9 IN PROGRESS** (`dc675da`) — comprehensive catalog + HUD weapon icons (see below).
+- **Phase 9 IN PROGRESS** (`dc675da` + garage/car-select work below) — catalog + HUD icons + garage
+  weapon-loadout flow + full-roster car select (built & installed; on-device visual verify pending unlock).
 
 ## Verified on-track (our app drives correctly)
 Logs show OUR engine drives clean: laps count, curve cap engages, `off=false` (no spin/delocalize) —
@@ -88,27 +89,88 @@ to `lapTarget` ends the race (`finishRace`) → Results. Default throttle 0.55.
 - Note: campaign mission game_types — mission_01 `tutorial`, 02 `onboarding_battle_cam`, 03
   `onboarding_battle_brick`, 04/05 `race`, 06 `battle`. Only `race`/`time*` disable weapons.
 
-## Phase 9 — remaining (next chat starts here)
-1. **Garage weapon-select loadout** — the 4.0.4 flow: Garage → car → **WEAPONS** card → 3 bay slots →
-   **weapon picker** (horizontal cards w/ art + name + level, like screenshots
-   `reference/screenshots/ddl404/16_car_detail.png`,`17_weapons_loadout.png`,`18_weapon_picker.png`).
-   Equip into `Profile.loadout` (`carId:bay→itemId`, helper `equipItem` exists). The in-race HUD + combat
-   already read `loadoutFor(carId)`, so equipping will immediately drive what fires. Screens to rebuild
-   from stubs: `ui/screens/GarageScreens.kt` (GarageItems / ItemShop are WireframeScreens). Use
-   `rememberAsset(ItemRepository.imageAsset(id))` for art.
-2. **Full-roster car select** — Match Setup currently lists only powered-on BLE cars; user wants the
-   4.0.4 selector: **all cars** (`GameData.cars`, tabs Supercars/Supertrucks/Drive) with the
-   nearby/connected ones selectable (match `mgr.found`/`mgr.cars` by `modelId`), others greyed
-   "power on". File: `ui/screens/RaceScreens.kt` `MatchSetupScreen`.
-3. **F&F weapon detail art** — 60 F&F items fall back to hitzone icons (DDL 2.6 had no F&F cars). RE the
-   real canister art: `foxtrot.xapk` OBB Unity assets via UnityPy (`scratchpad/extract_all.py` pattern),
-   or 4.0.4 `.ctex` (`Assets/CarWeapons/<Car>/<id>-large.png`) via gdsdecomp; drop PNGs into
-   `assets/items/`.
-4. **4.0.4 visual restyle** — the user wants screens to look like 4.0.4 (main menu EXTRAS|SINGLE PLAYER|
-   MULTIPLAYER; the card styling in the screenshots). 4.0.4 in-race HUD spec = its `controller.scn`
-   (TouchScreenButtons w/ weapon metadata + canister art) + `Assets/BaseUI/controller_overlay.png` +
-   icons (damage/defense/incoming/accel). User OK'd reinstalling 4.0.4 to screenshot the live in-race
-   controller for exact parity.
+## Phase 9 — garage loadout + car select (DONE, built+installed; on-device verify pending unlock)
+Design spec artifact (4.0.4 layout, app palette, real data): published this session.
+1. **Garage weapon-select loadout — DONE.** Flow: Garage → car → **Car Detail** (`VehicleDetailScreen`,
+   was a wireframe stub; now hero card + WEAPONS/UPGRADES action cards, WEAPONS previews equipped
+   attack+support canisters) → **WeaponLoadout** (`WeaponLoadoutScreen`, new route `WeaponLoadout(carId)`:
+   one card per bay — ATTACK + SUPPORT always, SPECIAL only when the car has special items) → **WeaponPicker**
+   (`WeaponPickerScreen`, new route `WeaponPicker(carId,bay)`: `LazyRow` of every equippable weapon + a
+   "No Weapon" clear card; tap equips & pops back, highlights current). Equips via `ProfileRepository.equipItem`
+   (`carId:bay→itemId`); HUD/combat read `loadoutFor(carId)` live. Art via `rememberAsset(ItemRepository.imageAsset(id))`.
+   All in `ui/screens/GarageScreens.kt` (+ routes in `nav/Routes.kt` & `nav/OverdriveNavHost.kt`).
+   **Default weapon w/ art:** `ItemRepository.defaultItem(bay,car)` / `defaultLoadout(car)` = lowest-level
+   equippable WITH `-large` art (Groundshock → ElectroPulse / Tachyon Disruptor). `equippableFor` now
+   junk-filters 4 nameless internal rows (`ZFXDisable`, `NukeParentShortRange*`). `Combat.init` defaults
+   player-fallback + AI to `defaultLoadout` instead of the art-less `base_machine_gun`/`base_shield`.
+2. **Full-roster car select — DONE.** `MatchSetupScreen` rebuilt: tabs **Supercars/Supertrucks/Drive**
+   (new `CarType.category` in `GameData`, derived: `voice_id=="Gen1"`→Drive; `extends∈{102,103}`+Mammoth→
+   Supertrucks; else Supercars) → `LazyVerticalGrid` of ALL cars in the tab. Per-card `Slot`: PLAYER(gold,
+   "P1·YOU")/CONNECTED(green,"TAP TO SET P1")/NEARBY(blue,"TAP TO CONNECT"+rssi)/OFFLINE(grey,"POWER ON"),
+   matched to `mgr.cars`/`mgr.found` by `modelId`. Tap = set P1 / connect / no-op. Connected cars whose
+   modelId doesn't resolve are appended so none are lost. Kept the laps stepper + Scan Track CTA.
+3. **Weapon/car art — DONE (carved from 4.0.4 .ctex).** 4.0.4 imports textures as
+   CompressedTexture2D `vram_texture:false` → each `assets/.godot/imported/*.ctex` embeds a lossless
+   **WebP** (carve the RIFF/WEBP blob; no gdsdecomp/Ghidra). `tools/extract_ctex_art.py [weapons|cars|all]`
+   unzips the apk, carves, and bundles: **28 missing weapon renders** → `assets/items/*.webp`
+   (`imageAsset` now checks `-large.webp`/`-medium.webp`; Android decodes WebP natively); **Dynamo +
+   Mammoth car silhouettes** (DDL had no F&F cars) → real renders in `assets/cars/*.png` (carved→PIL→PNG,
+   720 from 4.0.4 + 420 downscaled). Also: `ItemRepository.equippable()` = named (non-blank) AND
+   `detailImage != null` → hides the art-less `NukeParent*` template family (was showing as generic
+   class-icon placeholders that duplicated real Gen1 weapons) + `ZFXDisable`. Only `DynamoEbrakeL01`
+   still lacks a render (no 4.0.4 source) → 1 hitzone-icon fallback.
+4. **4.0.4 visual restyle — NEXT AGENT STARTS HERE (self-contained brief below).**
+   GOAL: reskin our screens to 4.0.4's look — **purple/violet nebula** backgrounds, **two-tone italic
+   racing names**, translucent dark-violet **rounded cards** w/ soft borders, **glowing blue holo**
+   accents; main menu reordered to **EXTRAS | SINGLE PLAYER | MULTIPLAYER**. Layout/structure is already
+   4.0.4-shaped — this is mostly a *theme + chrome* pass, not new screens.
+   KEY LEVER: it's centralized. Edit `ui/theme/Theme.kt` (`OverdriveColors` → violet palette) + the shared
+   components in `ui/components/Components.kt` (`OverdriveBackground` bg art, `OverdrivePanel` card style,
+   `OverdriveTopBar`, `PrimaryButton`) and ~every screen inherits it. Promote `RacingName` (currently
+   private in `GarageScreens.kt`) to a shared component and use it for titles/car names.
+   ASSETS (carve from 4.0.4 via `tools/extract_ctex_art.py` — extend it with a UI mode; same WebP carve):
+   `Assets/Background/{base,extended}.png` (nebula bg), `Assets/BaseUI/simplegradient.png` (card gradient),
+   `Assets/BaseUI/controller_overlay.png` (in-race HUD frame), `Assets/BaseUI/icons/{damage,defense,
+   incoming,accel,topSpeed,anki_coin_v4,lock,PlaceOnTrack}.png` (HUD/UI icons), `Assets/UILogo/*`,
+   `Assets/BaseUI/title/*`. Bundle to `assets/ui/`.
+   REFERENCE: `reference/screenshots/ddl404/` (01_main_menu, 02_singleplayer, 14_extras, 15_garage,
+   16–18 garage/weapons, 20_settings) + the published design-spec artifact (palette/type already
+   calibrated): https://claude.ai/code/artifact/ccf33bd9-d857-48d4-9965-864d6ce93d8c (WebFetch it).
+   Load skill `artifact-design` for any new mockups — user confirmed it's available.
+   HARDEST PART: in-race HUD parity — rebuild `InRaceHudScreen` (`ui/screens/RaceScreens.kt`) around
+   `controller_overlay.png` + the damage/defense/incoming/accel/topSpeed icons (matches `controller.scn`:
+   TouchScreenButtons w/ weapon metadata + canister art). User OK'd **reinstalling 4.0.4** to screenshot
+   the live controller for exact parity — **uninstall it after** (duplicate "Overdrive" icon caused a
+   wasted test cycle before; see "App identity" up top).
+   VERIFY: build/install per toolchain; device is landscape — get tap coords from `adb shell uiautomator
+   dump` (visual coordinate estimates were unreliable for small targets like tabs), screencap when unlocked.
+
+## Phase 9 — economy/progression (DONE this session; user chose "Full 3.4.0 progression" over 4.0.4 free-play)
+Verified on-device (device unlocked): Car Detail, Weapons Loadout, Weapon Picker (attack+support, real
+art, ownership), Item Shop (prices+art), Match Setup roster (Supercars/Supertrucks tabs), Dynamo+Mammoth
+renders. In-race upgrade EFFECTS need cars-on-track to confirm (not yet driven).
+- **Upgrades are now functional + per-car** (`Routes.GarageUpgrades(carId)`, keyed `"$carId:$track"`):
+  `MetaGame.speedMult/damageMult/defenseMult/energyMult(level)` (per-level: speed +5%, weapons +8%,
+  defense −8% incoming, energy +12%; maxLevel 5). `RaceEngine.start()` reads the player car's levels →
+  `playerSpeedMult` (applied in `effectiveSpeed`, straight-line only, hard-capped `SPEED_CEIL=1000`;
+  curves stay 450 for hardware safety) + `Combat.PlayerMods(damage/defense/energy)` passed to `combat.init`
+  (applied in `applyHit`/regen for the player car only; AI = 1f).
+- **Weapon ownership gating:** `Profile.owns(item)` = **level-1 starters are free-owned**, L2+ must be
+  looted/bought. Picker: owned→equip; locked→**Buy** (`spendCoins`+`addItem`+`equipItem`) or greyed if
+  unaffordable. `ItemRepository.itemPrice` = `cost` else `200·level²`.
+- **Item Shop + Daily Specials functional:** `ItemShopScreen` = grid of all buyable (L2+) weapons →
+  `ItemShopDetail` (stats + Buy). `GarageDailySpecialsScreen` = epoch-day-seeded 6 picks at 25% off, inline
+  buy. All in `GarageScreens.kt`.
+- **4.0.4 weapon-impact research (answered):** weapons are client-side virtual (cars carry none) — hits
+  drain virtual health (→disable/spin-out) + apply status effects expressed as BLE speed/lane changes
+  (tractor ×0.35, gravity ×0.08+nosteer, scrambler=invert, shield/boost). Per-weapon stats (damage/energy/
+  cooldown/range/effects/durations) already come from the real items.json. The *magnitudes* we approximate
+  (MAX_HEALTH=100, the slow factors, respawn) live in the **compiled `libDriveEngine.so`** (3.4.0 Mono
+  build, `overdrive-decompiled/lib/armeabi-v7a/libDriveEngine.so`) as `VehicleSpeedItemEffect.force` — NOT
+  in the JSON config (effects there are booleans + duration) and NOT readable in 4.0.4 (.gdc). **Ghidra on
+  libDriveEngine.so is the path** to extract the real combat constants if exact parity is wanted (user has
+  Ghidra). AI item-use conditions + the real item-shop rotation ARE in config (`characters/itemUse/*.json`,
+  `gameData/itemShopSchedule.json`) and can be wired for more fidelity.
 
 ## Phases 10–13 (not started)
 - **10 Story parity:** unblock the 31 non-evaluable Overdrive stars (PREF_CAR/BANNED_ITEM/NO_DEATHS —
