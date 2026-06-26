@@ -50,6 +50,8 @@ data class RawItem(
     val cost: Int? = null,
     @SerialName("card_power") val cardPower: Double? = null,
     @SerialName("damage_per_target_per_s") val damagePerTargetPerS: Double? = null,
+    @SerialName("damage_per_target_per_second_charged") val damageChargedPerS: Double? = null,
+    @SerialName("damage_per_target") val damagePerTarget: Double? = null,
     @SerialName("energy_use_per_s") val energyUsePerS: Double? = null,
     @SerialName("recharge_time_s") val rechargeTimeS: Double? = null,
     @SerialName("activation_delay") val activationDelay: Double? = null,

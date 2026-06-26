@@ -85,7 +85,8 @@ object ItemRepository {
             level = first { it.level } ?: 1,
             cost = first { it.cost } ?: 0,
             cardPower = first { it.cardPower } ?: 0.0,
-            damagePerSec = first { it.damagePerTargetPerS } ?: 0.0,
+            // weapons spell damage three ways: continuous (machine gun), charged (sniper/EMP), per-shot (shotgun/mine/ram)
+            damagePerSec = first { it.damagePerTargetPerS } ?: first { it.damageChargedPerS } ?: first { it.damagePerTarget } ?: 0.0,
             energyUsePerS = first { it.energyUsePerS } ?: 0.0,
             rechargeTimeS = first { it.rechargeTimeS } ?: 0.0,
             activationDelayS = first { it.activationDelay } ?: 0.0,

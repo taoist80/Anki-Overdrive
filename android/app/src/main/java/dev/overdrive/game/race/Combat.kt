@@ -123,7 +123,7 @@ class Combat {
         c.readyAt[bay] = now + cooldownMs + (item.activationDelayS * 1000).toLong()
 
         when {
-            isSupport(item) -> applySupport(c, item)
+            isSelf(item) -> applySelf(c, item)
             else -> {
                 val targets = resolveTargets(c, item, telemetry)
                 targets.forEach { applyHit(c, it, item, now) }
@@ -133,28 +133,38 @@ class Combat {
         return true
     }
 
-    private fun isSupport(item: GameItem): Boolean = when (item.type) {
-        "shield", "boost", "e-brake", "reverse_drive" -> true
-        else -> item.bay == Bay.SUPPORT && item.sourceEffects.isEmpty() && item.damagePerSec <= 0.0
-    }
+    /** Self-affecting items (the targeter points at the firer): shield/boost/e-brake/reverse. */
+    private fun isSelf(item: GameItem): Boolean =
+        item.targeter?.type == "self" || item.type in setOf("shield", "boost", "e-brake", "reverse_drive")
 
-    private fun applySupport(c: CombatCar, item: GameItem) {
+    private fun applySelf(c: CombatCar, item: GameItem) {
         val now = SystemClock.elapsedRealtime()
         when (item.type) {
             "boost" -> c.boostUntil = now + 2500
             "shield" -> c.shieldUntil = now + 4000
-            else -> c.boostUntil = now + 1500   // e-brake/reverse etc. — minor self nudge
+            else -> { /* e-brake / reverse-drive: no combat effect modeled */ }
         }
     }
+
+    /** Effects an item inflicts on a hit target: explicit source_effects + the one implied by type. */
+    private fun effectsOf(item: GameItem): List<String> =
+        item.sourceEffects + listOfNotNull(
+            when (item.type) {
+                "tractor_beam" -> "tractor_beam"
+                "gravity_trap", "gravity_trap_rage" -> "gravity_beam"
+                "scrambler" -> "invert_steering"
+                else -> null
+            }
+        )
 
     private fun applyHit(from: CombatCar, targetAddr: String, item: GameItem, now: Long) {
         val t = cars[targetAddr] ?: return
         if (t.disabled) return
-        var dmg = item.damagePerSec.toFloat().coerceAtLeast(8f)
+        var dmg = item.damagePerSec.toFloat()   // real per-hit damage; 0 for pure-effect weapons
         if (now < t.shieldUntil) dmg *= SHIELD_BLOCK
-        t.health -= dmg
+        if (dmg > 0f) t.health -= dmg
         // Apply the weapon's status effects to the target for their configured duration.
-        for (effId in item.sourceEffects) {
+        for (effId in effectsOf(item)) {
             val eff = ItemRepository.effect(effId) ?: continue
             val durMs = ((if (eff.durationS > 0) eff.durationS else 1.5) * 1000).toLong()
             t.effects.add(ActiveEffect(effId, now + durMs))
