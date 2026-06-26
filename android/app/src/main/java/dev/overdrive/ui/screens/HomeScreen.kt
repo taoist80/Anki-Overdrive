@@ -61,7 +61,8 @@ fun HomeScreen(nav: OverdriveNav) {
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
             ) {
-                Text("OVERDRIVE", fontFamily = font, color = colors.textPrimary, fontSize = 56.sp, fontWeight = FontWeight.Bold, letterSpacing = 4.sp)
+                Text("ANKI", fontFamily = font, color = colors.rose, fontSize = 18.sp, fontWeight = FontWeight.Bold, letterSpacing = 9.sp)
+                Text("OVERDRIVE", fontFamily = font, color = colors.rose, fontSize = 56.sp, fontWeight = FontWeight.Bold, letterSpacing = 4.sp)
                 Text("X  ·  REBUILT", fontFamily = font, color = colors.gold, fontSize = 16.sp, letterSpacing = 6.sp)
                 Spacer(Modifier.height(36.dp))
 

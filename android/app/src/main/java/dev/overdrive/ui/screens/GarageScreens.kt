@@ -57,6 +57,7 @@ import dev.overdrive.ui.components.NavAction
 import dev.overdrive.ui.components.OverdrivePanel
 import dev.overdrive.ui.components.OverdriveScaffold
 import dev.overdrive.ui.components.PrimaryButton
+import dev.overdrive.ui.components.RacingName
 import dev.overdrive.ui.components.StatBars
 import dev.overdrive.ui.components.WireframeScreen
 import dev.overdrive.ui.theme.OverdriveTheme
@@ -257,21 +258,6 @@ fun WeaponPickerScreen(nav: OverdriveNav, carId: Int, bay: String) {
 }
 
 // ---- garage building blocks -------------------------------------------------
-
-/** Car name in the Overdrive racing style: uppercase italic; two-tone split on a camelCase seam. */
-@Composable
-private fun RacingName(name: String, fontSize: Int, modifier: Modifier = Modifier) {
-    val colors = OverdriveTheme.colors
-    val font = OverdriveTheme.font
-    val seam = name.withIndex().firstOrNull { (i, c) -> i > 0 && c.isUpperCase() }?.index ?: -1
-    val (head, tail) = if (seam > 0) name.substring(0, seam) to name.substring(seam) else name to ""
-    Row(modifier) {
-        Text(head.uppercase(), fontFamily = font, color = colors.textPrimary, fontSize = fontSize.sp,
-            fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
-        if (tail.isNotEmpty()) Text(tail.uppercase(), fontFamily = font, color = colors.blue,
-            fontSize = fontSize.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
-    }
-}
 
 @Composable
 private fun CarSprite(car: CarType, fraction: Float) {

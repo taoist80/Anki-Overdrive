@@ -34,10 +34,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -55,29 +58,50 @@ data class NavAction(
 enum class ButtonAccent { Blue, Gold, Orange, Outline }
 
 /**
- * Full-bleed Overdrive backdrop. `heroImage` paints the global background art (e.g.
- * "ui/global-background.png"); otherwise a dark base with the hex grid tiled accent on top.
+ * Full-bleed Overdrive backdrop — the 4.0.4 violet nebula, painted procedurally (layered radial
+ * "clouds" + a vignette) so it needs no bundled art and scales to any size. `heroImage`, if given,
+ * overlays carved nebula art (Background/base.png) on top once it's extracted; the procedural ground
+ * stays underneath as a guaranteed fallback. Edges stay dark for legibility.
  */
 @Composable
 fun OverdriveBackground(
     modifier: Modifier = Modifier,
-    heroImage: String? = "ui/global-background.png",
+    heroImage: String? = null,
     content: @Composable () -> Unit,
 ) {
     val colors = OverdriveTheme.colors
     val hero = rememberAsset(heroImage)
-    val hex = rememberAsset("ui/ui_BackgroundHex.png")
-    Box(modifier.fillMaxSize().background(colors.background)) {
-        when {
-            hero != null -> Image(hero, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-            hex != null -> Image(hex, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alpha = 0.20f)
-        }
-        // Darkening scrim so foreground text/panels stay legible over busy art.
-        Box(
-            Modifier.fillMaxSize().background(
-                Brush.verticalGradient(listOf(Color(0xAA000000), Color(0x55000000), Color(0xCC000000)))
-            )
-        )
+    Box(
+        modifier
+            .fillMaxSize()
+            .drawBehind {
+                val w = size.width
+                val h = size.height
+                val span = maxOf(w, h)
+                drawRect(colors.background)
+                fun cloud(color: Color, cx: Float, cy: Float, rad: Float) {
+                    drawRect(
+                        Brush.radialGradient(
+                            listOf(color, Color.Transparent),
+                            center = Offset(cx * w, cy * h),
+                            radius = rad * span,
+                        )
+                    )
+                }
+                cloud(Color(0x7A5B2A82), 0.30f, 0.28f, 0.85f) // orchid
+                cloud(Color(0x5C9B3FB8), 0.74f, 0.40f, 0.62f) // hot magenta
+                cloud(Color(0x662A1240), 0.55f, 0.86f, 0.95f) // deep indigo, low
+                cloud(Color(0x184FB0FF), 0.84f, 0.14f, 0.55f) // cool holo glow, top-right
+                drawRect( // vignette: dark edges, keeps text legible over the bright center
+                    Brush.radialGradient(
+                        listOf(Color.Transparent, Color(0xCC0C0617)),
+                        center = Offset(0.5f * w, 0.40f * h),
+                        radius = 1.15f * span,
+                    )
+                )
+            }
+    ) {
+        if (hero != null) Image(hero, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alpha = 0.6f)
         content()
     }
 }
@@ -108,19 +132,22 @@ fun OverdriveTopBar(
     }
 }
 
+/** 4.0.4 back affordance: a rounded translucent square chip with a chevron (replaces "‹ BACK"). */
 @Composable
 private fun BackChip(onBack: () -> Unit, modifier: Modifier = Modifier) {
     val colors = OverdriveTheme.colors
-    Row(
+    val shape = RoundedCornerShape(10.dp)
+    Box(
         modifier
-            .clip(RoundedCornerShape(4.dp))
-            .clickable(onClick = onBack)
-            .padding(horizontal = 10.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .width(40.dp)
+            .height(36.dp)
+            .clip(shape)
+            .background(Color(0x14FFFFFF))
+            .border(1.dp, colors.panelBorder, shape)
+            .clickable(onClick = onBack),
+        contentAlignment = Alignment.Center,
     ) {
-        Text("‹", color = colors.gold, fontSize = 26.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.width(4.dp))
-        Text("BACK", color = colors.textDim, fontSize = 13.sp, letterSpacing = 1.sp)
+        Text("‹", color = colors.textPrimary, fontSize = 22.sp, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -132,7 +159,7 @@ private fun BackChip(onBack: () -> Unit, modifier: Modifier = Modifier) {
 fun OverdriveScaffold(
     title: String,
     onBack: (() -> Unit)? = null,
-    heroImage: String? = "ui/global-background.png",
+    heroImage: String? = null,
     right: (@Composable () -> Unit)? = null,
     contentPadding: PaddingValues = PaddingValues(horizontal = 28.dp),
     content: @Composable (Modifier) -> Unit,
@@ -165,14 +192,14 @@ fun PrimaryButton(
         ButtonAccent.Outline -> Color.Transparent
     }
     val outline = accent == ButtonAccent.Outline
-    val shape = RoundedCornerShape(6.dp)
+    val shape = RoundedCornerShape(9.dp)
     Box(
         modifier
             .heightIn(min = 52.dp)
             .alpha(if (enabled) 1f else 0.4f)
             .clip(shape)
-            .then(if (outline) Modifier.border(1.5.dp, colors.gold.copy(alpha = 0.8f), shape) else Modifier)
-            .background(if (outline) Color(0x22FFFFFF) else fill)
+            .then(if (outline) Modifier.border(1.5.dp, colors.blue.copy(alpha = 0.85f), shape) else Modifier)
+            .background(if (outline) Color(0x14FFFFFF) else fill)
             .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 22.dp, vertical = 14.dp),
         contentAlignment = Alignment.Center,
@@ -180,7 +207,7 @@ fun PrimaryButton(
         Text(
             text.uppercase(),
             fontFamily = font,
-            color = if (outline) colors.gold else Color.Black,
+            color = if (outline) colors.blue else Color.Black,
             fontSize = 16.sp,
             fontWeight = FontWeight.Bold,
             letterSpacing = 1.5.sp,
@@ -189,18 +216,53 @@ fun PrimaryButton(
     }
 }
 
-/** A bordered translucent panel — the recurring "card" container across Overdrive screens. */
+/**
+ * Car/weapon name in the Overdrive racing style: uppercase heavy italic, two-tone split on the
+ * camelCase seam (e.g. Ground|shock). [hlColor] tints the tail — defaults to the holo accent; pass a
+ * brand color (red / gold / green) per car. Promoted from GarageScreens for reuse across the app.
+ */
+@Composable
+fun RacingName(
+    name: String,
+    fontSize: Int,
+    modifier: Modifier = Modifier,
+    hlColor: Color = OverdriveTheme.colors.blue,
+) {
+    val colors = OverdriveTheme.colors
+    val font = OverdriveTheme.font
+    val seam = name.withIndex().firstOrNull { (i, c) -> i > 0 && c.isUpperCase() }?.index ?: -1
+    val (head, tail) = if (seam > 0) name.substring(0, seam) to name.substring(seam) else name to ""
+    Row(modifier) {
+        Text(
+            head.uppercase(), fontFamily = font, color = colors.textPrimary, fontSize = fontSize.sp,
+            fontStyle = FontStyle.Italic, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp,
+        )
+        if (tail.isNotEmpty()) Text(
+            tail.uppercase(), fontFamily = font, color = hlColor, fontSize = fontSize.sp,
+            fontStyle = FontStyle.Italic, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp,
+        )
+    }
+}
+
+/**
+ * The recurring 4.0.4 "card": a translucent dark-violet panel with a vertical gradient and a soft
+ * light border. The single most-reused container across Overdrive screens.
+ */
 @Composable
 fun OverdrivePanel(
     modifier: Modifier = Modifier,
     content: @Composable (Modifier) -> Unit,
 ) {
     val colors = OverdriveTheme.colors
-    val shape = RoundedCornerShape(8.dp)
+    val shape = RoundedCornerShape(14.dp)
     Box(
         modifier
             .clip(shape)
-            .background(colors.panel.copy(alpha = 0.85f))
+            .background(
+                Brush.verticalGradient(
+                    listOf(colors.panel.copy(alpha = 0.82f), colors.surface.copy(alpha = 0.82f))
+                )
+            )
             .border(1.dp, colors.panelBorder, shape)
     ) {
         content(Modifier.padding(18.dp))
@@ -306,7 +368,7 @@ fun WireframeScreen(
     title: String,
     onBack: (() -> Unit)? = null,
     subtitle: String? = null,
-    heroImage: String? = "ui/global-background.png",
+    heroImage: String? = null,
     actions: List<NavAction> = emptyList(),
     body: (@Composable () -> Unit)? = null,
 ) {

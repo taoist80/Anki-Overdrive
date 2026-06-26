@@ -119,15 +119,28 @@ Design spec artifact (4.0.4 layout, app palette, real data): published this sess
    `detailImage != null` → hides the art-less `NukeParent*` template family (was showing as generic
    class-icon placeholders that duplicated real Gen1 weapons) + `ZFXDisable`. Only `DynamoEbrakeL01`
    still lacks a render (no 4.0.4 source) → 1 hitzone-icon fallback.
-4. **4.0.4 visual restyle — NEXT AGENT STARTS HERE (self-contained brief below).**
+4. **4.0.4 visual restyle — IN PROGRESS (centralized theme pass DONE, build-verified).**
    GOAL: reskin our screens to 4.0.4's look — **purple/violet nebula** backgrounds, **two-tone italic
    racing names**, translucent dark-violet **rounded cards** w/ soft borders, **glowing blue holo**
    accents; main menu reordered to **EXTRAS | SINGLE PLAYER | MULTIPLAYER**. Layout/structure is already
    4.0.4-shaped — this is mostly a *theme + chrome* pass, not new screens.
-   KEY LEVER: it's centralized. Edit `ui/theme/Theme.kt` (`OverdriveColors` → violet palette) + the shared
-   components in `ui/components/Components.kt` (`OverdriveBackground` bg art, `OverdrivePanel` card style,
-   `OverdriveTopBar`, `PrimaryButton`) and ~every screen inherits it. Promote `RacingName` (currently
-   private in `GarageScreens.kt`) to a shared component and use it for titles/car names.
+   **DESIGN SPEC ARTIFACT (palette/type/components/logic-tree/mocks/motion all calibrated to the 6 ddl404
+   captures):** https://claude.ai/code/artifact/ea0e5fa4-88c1-484a-aff0-10df85042a6e (WebFetch it; built in
+   the new violet system itself, with a live nebula canvas + the full navigable screen inventory).
+   **DONE this pass (centralized, `assembleDebug` green):** `Theme.kt` `OverdriveColors` → violet palette
+   (background `#140A22` void, panel `#241A3A`, `blue`→holo `#4FB0FF`, textPrimary `#F4ECFA`, textDim
+   `#AE95C8`, panelBorder → white@14%, **new `rose #ECA9CE`** for the wordmark, gold kept as commit CTA).
+   `Components.kt`: `OverdriveBackground` now paints a **procedural violet nebula** (layered radial clouds +
+   vignette via `drawBehind`, no bundled art needed; `heroImage` defaults null, overlays carved art later);
+   `OverdrivePanel` = 14dp gradient card + soft border; `BackChip` = rounded translucent square; `PrimaryButton`
+   outline → holo. `RacingName` **promoted** to `Components.kt` (public, `hlColor` param, now italic) — private
+   copy removed from `GarageScreens.kt`. `OverdriveScaffold`/`WireframeScreen` `heroImage` defaults → null.
+   `HomeScreen` wordmark → rose ANKI/OVERDRIVE. **Not yet on-device verified** (needs unlock/screencap).
+   **REMAINING:** (a) carve nebula/HUD/icon art (extend `extract_ctex_art.py` w/ a `ui` mode → `assets/ui/`);
+   (b) HomeScreen menu **reorder** to EXTRAS|SINGLE PLAYER|MULTIPLAYER (needs the 3 grouping screens — Single
+   Player = Campaign/Open Play/Test Track 3-card; this is the only "new screens" bit); (c) in-race HUD rebuild
+   (hardest, below); (d) per-brand racing-name colors on car cards. KEY LEVER (still true for what's left):
+   it's centralized in `Theme.kt` + `Components.kt`.
    ASSETS (carve from 4.0.4 via `tools/extract_ctex_art.py` — extend it with a UI mode; same WebP carve):
    `Assets/Background/{base,extended}.png` (nebula bg), `Assets/BaseUI/simplegradient.png` (card gradient),
    `Assets/BaseUI/controller_overlay.png` (in-race HUD frame), `Assets/BaseUI/icons/{damage,defense,

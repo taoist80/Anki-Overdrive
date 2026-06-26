@@ -24,21 +24,24 @@ import androidx.compose.ui.unit.sp
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Overdrive palette — pulled from the extracted DDL/Anki chrome so screens read as Overdrive from
- * day one. Dark hex-grid backdrop, gold primary accent, blue/orange action accents.
+ * Overdrive palette — calibrated to the DDL 4.0.4 look (reference/screenshots/ddl404): a violet
+ * nebula ground, one glowing-blue "holo" accent, a rose reserved for the wordmark, and violet-biased
+ * neutrals. Gold is kept solely as the "commit" CTA color. `blue` carries the holo accent so the
+ * many existing `colors.blue` call sites pick up the new accent for free. See restyle design spec.
  */
 @Immutable
 data class OverdriveColors(
-    val background: Color = Color(0xFF0B0E13),
-    val surface: Color = Color(0xFF141A22),
-    val panel: Color = Color(0xFF1C2530),
-    val panelBorder: Color = Color(0xFF2E3A48),
-    val gold: Color = Color(0xFFE6B800),
-    val blue: Color = Color(0xFF22B7E6),
+    val background: Color = Color(0xFF140A22),       // void — page ground / vignette
+    val surface: Color = Color(0xFF1B1030),          // card gradient bottom
+    val panel: Color = Color(0xFF241A3A),            // card gradient top
+    val panelBorder: Color = Color(0x24FFFFFF),      // soft light border (white @ 14%)
+    val gold: Color = Color(0xFFE6B800),             // kept — commit CTA only
+    val blue: Color = Color(0xFF4FB0FF),             // holo accent — selection / glow
     val orange: Color = Color(0xFFF26A21),
-    val textPrimary: Color = Color(0xFFFFFFFF),
-    val textDim: Color = Color(0xFF8AA0B6),
-    val barEmpty: Color = Color(0xFF2A323C),
+    val rose: Color = Color(0xFFECA9CE),             // wordmark only
+    val textPrimary: Color = Color(0xFFF4ECFA),      // violet-white
+    val textDim: Color = Color(0xFFAE95C8),          // lavender (chosen neutral)
+    val barEmpty: Color = Color(0xFF2E2440),         // violet-biased empty track
     val danger: Color = Color(0xFFE5484D),
     val success: Color = Color(0xFF49C56A),
 )
