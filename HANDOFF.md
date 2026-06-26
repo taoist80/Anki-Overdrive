@@ -136,11 +136,19 @@ Design spec artifact (4.0.4 layout, app palette, real data): published this sess
    outline → holo. `RacingName` **promoted** to `Components.kt` (public, `hlColor` param, now italic) — private
    copy removed from `GarageScreens.kt`. `OverdriveScaffold`/`WireframeScreen` `heroImage` defaults → null.
    `HomeScreen` wordmark → rose ANKI/OVERDRIVE. **Not yet on-device verified** (needs unlock/screencap).
+   **Main-menu reorder — DONE (build-verified, on branch `phase9-restyle-menu`).** User chose a **4-entry**
+   menu (EXTRAS · SINGLE PLAYER · MULTIPLAYER · **GARAGE** kept as its own entry, not tucked under Extras)
+   + **Multiplayer = "coming soon"** placeholder (Phase 12 not built). New `MenuScreens.kt`:
+   `SinglePlayerScreen` (3 portrait HubCards → Campaign/Open Play/Test Track), `ExtrasScreen` (FlowRow tiles →
+   Store/Profile/Coin Shop/Guide/Settings), `MultiplayerScreen` (themed placeholder). New routes
+   `Routes.{SinglePlayer,Extras,Multiplayer}` + nav-host wiring; `HomeScreen` rebuilt to rose wordmark + the 4
+   glowing text entries (no more stacked buttons / link row).
    **REMAINING:** (a) carve nebula/HUD/icon art (extend `extract_ctex_art.py` w/ a `ui` mode → `assets/ui/`);
-   (b) HomeScreen menu **reorder** to EXTRAS|SINGLE PLAYER|MULTIPLAYER (needs the 3 grouping screens — Single
-   Player = Campaign/Open Play/Test Track 3-card; this is the only "new screens" bit); (c) in-race HUD rebuild
-   (hardest, below); (d) per-brand racing-name colors on car cards. KEY LEVER (still true for what's left):
-   it's centralized in `Theme.kt` + `Components.kt`.
+   probe showed **no baked nebula bitmap** in 4.0.4 (only `simplegradient`) — our procedural `drawBehind` nebula
+   is the right call; useful carves = `controller_overlay` + `ui_icon_*` for the HUD. (b) in-race HUD rebuild
+   (hardest, below). (c) per-brand racing-name colors on car cards (no color data yet — holo tail is the
+   consistent default). (d) on-device visual verify of the whole restyle (needs unlock/screencap).
+   KEY LEVER (still true): centralized in `Theme.kt` + `Components.kt`.
    ASSETS (carve from 4.0.4 via `tools/extract_ctex_art.py` — extend it with a UI mode; same WebP carve):
    `Assets/Background/{base,extended}.png` (nebula bg), `Assets/BaseUI/simplegradient.png` (card gradient),
    `Assets/BaseUI/controller_overlay.png` (in-race HUD frame), `Assets/BaseUI/icons/{damage,defense,

@@ -79,6 +79,11 @@ object Routes {
     @Serializable object TracksHome
     @Serializable data class TrackDetail(val trackId: String = "")
 
+    // ---- 4.0.4 main-menu hubs (Home → Extras | Single Player | Multiplayer | Garage) ----
+    @Serializable object SinglePlayer   // Campaign · Open Play · Test Track
+    @Serializable object Extras         // Store · Profile · Coin Shop · Guide · Settings
+    @Serializable object Multiplayer    // "coming soon" placeholder until Phase 12
+
     // ---- Top-level singletons ----
     @Serializable object CoinShop
     @Serializable object Guide

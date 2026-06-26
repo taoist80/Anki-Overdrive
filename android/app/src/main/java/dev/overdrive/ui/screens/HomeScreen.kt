@@ -27,12 +27,15 @@ import androidx.compose.ui.unit.sp
 import dev.overdrive.nav.OverdriveNav
 import dev.overdrive.nav.Routes
 import dev.overdrive.profile.ProfileRepository
-import dev.overdrive.ui.components.ButtonAccent
 import dev.overdrive.ui.components.CoinPill
 import dev.overdrive.ui.components.OverdriveBackground
-import dev.overdrive.ui.components.PrimaryButton
 import dev.overdrive.ui.theme.OverdriveTheme
 
+/**
+ * 4.0.4 main menu: rose ANKI/OVERDRIVE wordmark over the violet nebula, with the four entries as
+ * glowing letter-spaced text — Extras · Single Player · Multiplayer · Garage (Garage kept as its own
+ * top-level entry per the restyle decision). Top chrome keeps the driver name + coin balance.
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun HomeScreen(nav: OverdriveNav) {
@@ -44,7 +47,7 @@ fun HomeScreen(nav: OverdriveNav) {
     OverdriveBackground {
         val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
         Column(Modifier.fillMaxSize().padding(top = top)) {
-            // Top chrome: profile chip (left) + coin balance (right)
+            // Top chrome: driver name (left) + coin balance (right)
             Box(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp)) {
                 Text(
                     profile.driverName.uppercase(),
@@ -64,41 +67,33 @@ fun HomeScreen(nav: OverdriveNav) {
                 Text("ANKI", fontFamily = font, color = colors.rose, fontSize = 18.sp, fontWeight = FontWeight.Bold, letterSpacing = 9.sp)
                 Text("OVERDRIVE", fontFamily = font, color = colors.rose, fontSize = 56.sp, fontWeight = FontWeight.Bold, letterSpacing = 4.sp)
                 Text("X  ·  REBUILT", fontFamily = font, color = colors.gold, fontSize = 16.sp, letterSpacing = 6.sp)
-                Spacer(Modifier.height(36.dp))
+                Spacer(Modifier.height(48.dp))
 
-                Column(Modifier.widthIn(max = 420.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    PrimaryButton("Campaign", { nav.go(Routes.CampaignGraph) }, Modifier.fillMaxWidth(), ButtonAccent.Gold)
-                    PrimaryButton("Open Play", { nav.go(Routes.OpenPlayGraph) }, Modifier.fillMaxWidth(), ButtonAccent.Blue)
-                    PrimaryButton("Garage", { nav.go(Routes.GarageGraph) }, Modifier.fillMaxWidth(), ButtonAccent.Outline)
-                    PrimaryButton("Join a Friend", { nav.go(Routes.OpenPlayGraph) }, Modifier.fillMaxWidth(), ButtonAccent.Outline)
-                }
-
-                Spacer(Modifier.height(28.dp))
                 FlowRow(
-                    Modifier.widthIn(max = 520.dp),
-                    horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    Modifier.widthIn(max = 680.dp),
+                    horizontalArrangement = Arrangement.spacedBy(40.dp, Alignment.CenterHorizontally),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
                 ) {
-                    HomeLink("Profile") { nav.go(Routes.ProfileGraph) }
-                    HomeLink("Store") { nav.go(Routes.StoreGraph) }
-                    HomeLink("Coin Shop") { nav.go(Routes.CoinShop) }
-                    HomeLink("Tracks") { nav.go(Routes.TracksGraph) }
-                    HomeLink("Guide") { nav.go(Routes.Guide) }
-                    HomeLink("Settings") { nav.go(Routes.SettingsGraph) }
+                    MenuEntry("Extras") { nav.go(Routes.Extras) }
+                    MenuEntry("Single Player") { nav.go(Routes.SinglePlayer) }
+                    MenuEntry("Multiplayer") { nav.go(Routes.Multiplayer) }
+                    MenuEntry("Garage") { nav.go(Routes.GarageGraph) }
                 }
             }
         }
     }
 }
 
+/** A main-menu entry: plain glowing uppercase text, the 4.0.4 menu vernacular (not a button). */
 @Composable
-private fun HomeLink(label: String, onClick: () -> Unit) {
+private fun MenuEntry(label: String, onClick: () -> Unit) {
     Text(
         label.uppercase(),
         fontFamily = OverdriveTheme.font,
-        color = OverdriveTheme.colors.textDim,
-        fontSize = 13.sp,
-        letterSpacing = 1.sp,
-        modifier = Modifier.clickable(onClick = onClick).padding(vertical = 6.dp),
+        color = OverdriveTheme.colors.textPrimary,
+        fontSize = 16.sp,
+        fontWeight = FontWeight.Bold,
+        letterSpacing = 3.sp,
+        modifier = Modifier.clickable(onClick = onClick).padding(vertical = 8.dp, horizontal = 4.dp),
     )
 }

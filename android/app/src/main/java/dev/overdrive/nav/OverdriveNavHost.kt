@@ -36,15 +36,18 @@ import dev.overdrive.ui.screens.HomeScreen
 import dev.overdrive.ui.screens.InRaceHudScreen
 import dev.overdrive.ui.screens.ItemShopDetailScreen
 import dev.overdrive.ui.screens.ItemShopScreen
+import dev.overdrive.ui.screens.ExtrasScreen
 import dev.overdrive.ui.screens.MatchSetupScreen
 import dev.overdrive.ui.screens.MissionDetailScreen
 import dev.overdrive.ui.screens.MissionSelectScreen
+import dev.overdrive.ui.screens.MultiplayerScreen
 import dev.overdrive.ui.screens.NotificationPromptScreen
 import dev.overdrive.ui.screens.PlayerSelectScreen
 import dev.overdrive.ui.screens.ProfileHomeScreen
 import dev.overdrive.ui.screens.ProfileMedalsScreen
 import dev.overdrive.ui.screens.RaceResultsScreen
 import dev.overdrive.ui.screens.SavedAccountsScreen
+import dev.overdrive.ui.screens.SinglePlayerScreen
 import dev.overdrive.ui.screens.StoreCheckoutOptionsScreen
 import dev.overdrive.ui.screens.StoreCheckoutSummaryScreen
 import dev.overdrive.ui.screens.StoreHomeScreen
@@ -152,6 +155,11 @@ fun OverdriveNavHost(nav: OverdriveNav) {
             composable<Routes.DevSettings> { DevSettingsScreen(nav) }
             composable<Routes.BleLab> { LabScreen(AnkiCarManagerHolder.require()) }
         }
+
+        // ---- 4.0.4 main-menu hubs ----
+        composable<Routes.SinglePlayer> { SinglePlayerScreen(nav) }
+        composable<Routes.Extras> { ExtrasScreen(nav) }
+        composable<Routes.Multiplayer> { MultiplayerScreen(nav) }
 
         // ---- Top-level singletons ----
         composable<Routes.CoinShop> { CoinShopScreen(nav) }
