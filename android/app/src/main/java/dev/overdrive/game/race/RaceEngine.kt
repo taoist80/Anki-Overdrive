@@ -41,6 +41,8 @@ data class RaceState(
     val elapsedMs: Long = 0L,
     val cars: List<CarTelemetry> = emptyList(),
     val playerHud: Combat.PlayerHud? = null,
+    val scanning: Boolean = false,       // a track-scan lap is in progress
+    val scanComplete: Boolean = false,   // every car has mapped a full lap (ready to race)
 ) {
     /** Standings: most laps, then most segment transitions (track-progress tiebreaker). */
     val standings: List<CarTelemetry>
@@ -73,6 +75,8 @@ class RaceEngine(private val mgr: CarManager) {
         const val CONTROL_MS = 250L     // re-send cadence for target speeds
         const val FINISH_PIECE_ID = 33  // the unique start/finish piece ('B', isFinishLine) from tracks.json
         const val LANE_HEAL_MM = 12f    // re-send a lane change if the car is >this far from its target
+        const val SCAN_SPEED = 300      // mm/s during the track-scan lap (slow = reliable localization)
+        const val SCAN_TIMEOUT_MS = 60_000L  // give up waiting for every car to complete its scan lap
     }
 
     var state by mutableStateOf(RaceState())
@@ -85,6 +89,9 @@ class RaceEngine(private val mgr: CarManager) {
     private var startedAt = 0L
     private var playerAddr: String? = null
     private var designatedPlayer: String? = null
+    private var scanning = false
+    private var scanComplete = false
+    private var scanStartedAt = 0L
     val combat = Combat()
 
     init {
@@ -112,8 +119,39 @@ class RaceEngine(private val mgr: CarManager) {
         publish(mode = mode, running = false)
     }
 
+    /**
+     * Drive a slow scan lap so each car's firmware maps/localizes the track before racing — this is
+     * what the original game does at the start of a race, and skipping it (driving at race speed on an
+     * unmapped track) is what made cars delocalize, spin and reverse. Completes when every car has
+     * crossed the finish-line piece once (or [SCAN_TIMEOUT_MS]). No combat during scanning.
+     */
+    fun startScan() {
+        arm(state.mode)            // snapshot the connected cars (player = designated)
+        mgr.stopScan()             // free the BLE radio for driving
+        scanning = true; scanComplete = false
+        scanStartedAt = SystemClock.elapsedRealtime()
+        tele.keys.forEach { addr ->
+            targetSpeed[addr] = SCAN_SPEED
+            lastPiece[addr] = -1
+            tele[addr]?.let { tele[addr] = it.copy(laps = 0, transitions = 0) }
+            mgr.setLaneOffset(addr, 0f)
+        }
+        Log.i(TAG, "Track scan: mapping with ${tele.size} cars @ $SCAN_SPEED mm/s")
+        publish(running = false)
+        main.removeCallbacks(control); main.post(control)
+    }
+
+    private fun finishScan(timedOut: Boolean) {
+        scanning = false; scanComplete = true
+        tele.keys.forEach { mgr.drive(it, 0) }
+        main.removeCallbacks(control)
+        Log.i(TAG, "Track scan complete${if (timedOut) " (timed out)" else ""}")
+        publish(running = false)
+    }
+
     fun start() {
         arm(state.mode)   // re-snapshot: include any car that finished connecting after Match Setup
+        scanning = false; mgr.stopScan()
         startedAt = SystemClock.elapsedRealtime()
         var aiIdx = 0
         tele.keys.forEach { addr ->
@@ -134,6 +172,7 @@ class RaceEngine(private val mgr: CarManager) {
 
     fun stop() {
         targetSpeed.clear()
+        scanning = false
         tele.keys.forEach { mgr.drive(it, 0) }
         main.removeCallbacks(control)
         combat.stop()
@@ -176,8 +215,15 @@ class RaceEngine(private val mgr: CarManager) {
     /** Control loop: re-send each car's (curve-aware) target so a dropped write can't stall a car. */
     private val control = object : Runnable {
         override fun run() {
-            if (!state.running) return
-            combat.tick(CONTROL_MS, tele.values)   // regen energy, expire effects, respawn, AI fire
+            if (!state.running && !scanning) return
+            if (scanning) {
+                // Scan lap done when every car has crossed the finish line once (mapped a full lap).
+                val mapped = tele.isNotEmpty() && tele.values.all { it.laps >= 1 }
+                val timedOut = SystemClock.elapsedRealtime() - scanStartedAt > SCAN_TIMEOUT_MS
+                if (mapped || timedOut) { finishScan(timedOut); return }
+            } else {
+                combat.tick(CONTROL_MS, tele.values)   // regen energy, expire effects, respawn, AI fire
+            }
             tele.keys.forEach { addr ->
                 val t = tele[addr]
                 if (t?.offTrack == true || combat.isDisabled(addr)) {
@@ -253,7 +299,7 @@ class RaceEngine(private val mgr: CarManager) {
             val cc = combat.car(t.address)
             if (cc != null) t.copy(health = cc.health, energy = cc.energy, disabled = cc.disabled) else t
         }
-        state = RaceState(mode, running, elapsed(), cars, combat.playerHud(playerAddr))
+        state = RaceState(mode, running, elapsed(), cars, combat.playerHud(playerAddr), scanning, scanComplete)
     }
 }
 

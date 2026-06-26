@@ -27,6 +27,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -212,15 +213,54 @@ fun MatchSetupScreen(nav: OverdriveNav, mode: String, campaignMissionId: String)
     }
 }
 
+/**
+ * Real track-scan lap: drives every car slowly around the track once so the firmware maps/localizes
+ * it before racing (skipping this is what made cars delocalize, spin and reverse). Shows per-car
+ * progress; advances to the countdown when the track is mapped.
+ */
 @Composable
-fun TrackScanScreen(nav: OverdriveNav) = WireframeScreen(
-    title = "Ready Up",
-    onBack = { nav.back() },
-    subtitle = "Place the cars on the track and confirm. Curve slowdown and lap counting are now " +
-        "automatic (the engine reads each road piece live), so no manual scan is needed — a full " +
-        "visual track map is a later refinement.",
-    actions = listOf(NavAction("Ready — Countdown", { nav.go(Routes.Countdown) }, ButtonAccent.Gold)),
-)
+fun TrackScanScreen(nav: OverdriveNav) {
+    val ctx = LocalContext.current
+    val colors = OverdriveTheme.colors
+    val font = OverdriveTheme.font
+    val engine = remember { RaceEngineHolder.engine }
+    remember { RoadPieces.load(ctx); 0 }     // curve map must be ready before driving
+    LaunchedEffect(Unit) { engine.startScan() }
+    val st = engine.state
+
+    OverdriveBackground(heroImage = null) {
+        Column(
+            Modifier.fillMaxSize().padding(28.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Text(if (st.scanComplete) "TRACK MAPPED" else "SCANNING TRACK…",
+                fontFamily = font, color = colors.gold, fontSize = 26.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+            Spacer(Modifier.height(8.dp))
+            Text(if (st.scanComplete) "Every car has mapped a full lap."
+                 else "Cars are driving a slow lap to map the track — keep them on the track.",
+                fontFamily = font, color = colors.textDim, fontSize = 13.sp)
+            Spacer(Modifier.height(20.dp))
+            st.cars.forEach { c ->
+                Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("${if (c.isPlayer) "▸ " else ""}${carName(c.modelId, c.name)}",
+                        fontFamily = font, color = if (c.isPlayer) colors.gold else colors.textPrimary, fontSize = 15.sp)
+                    Text(when {
+                        c.laps >= 1 -> "mapped ✓"
+                        c.offTrack -> "off track — replace it"
+                        else -> "${c.transitions} segments…"
+                    }, fontFamily = font, color = if (c.offTrack) colors.danger else colors.textDim, fontSize = 13.sp)
+                }
+            }
+            Spacer(Modifier.height(24.dp))
+            if (st.scanComplete) {
+                PrimaryButton("Continue — Countdown", { nav.go(Routes.Countdown) }, accent = ButtonAccent.Gold)
+            } else {
+                PrimaryButton("Skip scan → Countdown", { engine.stop(); nav.go(Routes.Countdown) }, accent = ButtonAccent.Outline)
+            }
+        }
+    }
+}
 
 @Composable
 fun CountdownScreen(nav: OverdriveNav) {
@@ -252,7 +292,7 @@ fun InRaceHudScreen(nav: OverdriveNav) {
     val st = engine.state
     val player = st.cars.firstOrNull { it.isPlayer }
     val rank = st.standings.indexOfFirst { it.isPlayer }.let { if (it >= 0) it + 1 else 1 }
-    var throttle by remember { mutableFloatStateOf(0.7f) }   // ~500 mm/s of 700 max at start
+    var throttle by remember { mutableFloatStateOf(0.55f) }  // ~495 mm/s of 900 max — safe-cornering default
 
     OverdriveBackground(heroImage = null) {
         Column(Modifier.fillMaxSize().padding(20.dp)) {
