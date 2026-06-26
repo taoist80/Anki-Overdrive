@@ -97,6 +97,8 @@ class RaceEngine(private val mgr: CarManager) {
     private var scanStartedAt = 0L
     private var tickCount = 0
     private val staged = HashSet<String>()   // cars parked at the finish line during scan staging
+    private val lapStartSeg = HashMap<String, Int>()  // each car's segment-count at its last lap boundary
+    private var segsPerLap = 0                // segments in one physical lap, measured during the scan
     private var lapTarget = 3
     private var finished = false
 
@@ -139,10 +141,11 @@ class RaceEngine(private val mgr: CarManager) {
         arm(state.mode)            // snapshot the connected cars (player = designated)
         mgr.stopScan()             // free the BLE radio for driving
         scanning = true; scanComplete = false; finished = false; staged.clear()
+        segsPerLap = 0; lapStartSeg.clear()
         scanStartedAt = SystemClock.elapsedRealtime()
         tele.keys.forEach { addr ->
             targetSpeed[addr] = SCAN_SPEED
-            lastPiece[addr] = -1
+            lastPiece[addr] = -1; lapStartSeg[addr] = 0
             tele[addr]?.let { tele[addr] = it.copy(laps = 0, transitions = 0) }
             mgr.setLaneOffset(addr, 0f)
         }
@@ -173,6 +176,7 @@ class RaceEngine(private val mgr: CarManager) {
         var aiIdx = 0
         tele.keys.forEach { addr ->
             targetSpeed[addr] = if (addr == playerAddr) PLAYER_START else (AI_BASE + (aiIdx++ % 4) * AI_SPREAD)
+            lastPiece[addr] = -1; lapStartSeg[addr] = 0   // count race laps fresh from the staged start line
             mgr.setLaneOffset(addr, 0f)
         }
         // Arm the virtual combat model: equip the player's saved loadout, AI rivals a default.
@@ -290,21 +294,33 @@ class RaceEngine(private val mgr: CarManager) {
         var laps = t.laps
 
         if (newPiece >= 0 && newPiece != prev) {
-            // Lap = crossing the unique finish-line piece (id 33). Piece ids repeat around a track,
-            // so counting "return to first-seen id" over-counts — only the finish piece is singular.
-            if (newPiece == FINISH_PIECE_ID && prev != -1) laps += 1
             lastPiece[addr] = newPiece
-            // Scan staging: once a car has mapped a lap, park it at the finish line so every car
-            // starts the race from the same place (fair start), regardless of where it began the scan.
-            val stageNow = scanning && addr !in staged && newPiece == FINISH_PIECE_ID &&
-                (t.transitions >= SCAN_MIN_TRANSITIONS || laps >= 1)
+            // Lap = crossing the finish piece (id 33), DEBOUNCED: the finish piece id re-registers more
+            // than once per physical lap on real tracks (the over-count bug seen in the logs — 4-5
+            // segment "laps" amid ~8-segment real laps). Require ~3/4 of a lap's worth of segments
+            // (measured during the scan) between counts so a re-trigger can't add a phantom lap.
+            if (newPiece == FINISH_PIECE_ID && prev != -1) {
+                val gate = if (segsPerLap > 0) maxOf(4, segsPerLap * 3 / 4) else 4
+                val gap = t.transitions - (lapStartSeg[addr] ?: 0)
+                if (gap >= gate) {
+                    laps += 1
+                    lapStartSeg[addr] = t.transitions
+                    if (scanning && segsPerLap == 0) segsPerLap = t.transitions  // first scan lap = segs/lap
+                    Log.i(TAG, "${if (scanning) "SCAN" else "RACE"}.lap ${t.name} -> $laps @seg ${t.transitions} (segsPerLap=$segsPerLap)")
+                } else {
+                    Log.i(TAG, "${if (scanning) "SCAN" else "RACE"}.lap ${t.name} IGNORED finish re-trigger @seg ${t.transitions} (gap $gap < $gate)")
+                }
+            }
+            // Scan staging: after a car completes one mapped lap, park it at the finish line so every
+            // car starts the race from the same place (fair start), wherever it began the scan.
+            val stageNow = scanning && addr !in staged && newPiece == FINISH_PIECE_ID && laps >= 1
             if (stageNow) {
                 staged.add(addr); mgr.drive(addr, 0)
                 Log.i(TAG, "Race.scan: ${t.name} staged at start line")
             } else if (state.running || (scanning && addr !in staged)) {
                 mgr.drive(addr, effectiveSpeed(addr, newPiece), ACCEL) // react to curve immediately
             }
-            // Race finish: the first car to reach the lap target ends the race.
+            // Race finish: the first car (the winner) to reach the lap target ends the race for everyone.
             if (state.running && !finished && lapTarget > 0 && laps >= lapTarget) finishRace(addr)
         }
         // Any position update means the car is on the track again — clear off-track + resume.

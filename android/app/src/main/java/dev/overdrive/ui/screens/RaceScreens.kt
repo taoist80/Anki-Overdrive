@@ -366,10 +366,22 @@ fun InRaceHudScreen(nav: OverdriveNav) {
                     )
                 }
                 ControlButton("►", colors.blue, Modifier.weight(1f)) { engine.nudgeLane(1) }
-                val atk = st.playerHud?.bays?.getOrNull(0)
-                val sup = st.playerHud?.bays?.getOrNull(1)
-                BayButton(atk?.itemName ?: "—", atk?.ready != false, colors.orange) { engine.fireAttack() }
-                BayButton(sup?.itemName ?: "—", sup?.ready != false, colors.gold) { engine.fireSupport() }
+                val hud = st.playerHud
+                if (hud != null) {
+                    val atk = hud.bays.getOrNull(0); val sup = hud.bays.getOrNull(1)
+                    BayButton("ATTACK", atk?.itemName ?: "—", atk?.ready != false, colors.orange) { engine.fireAttack() }
+                    BayButton("SUPPORT", sup?.itemName ?: "—", sup?.ready != false, colors.gold) { engine.fireSupport() }
+                } else {
+                    // RACE / TIME TRIAL are weapon-free — say so instead of leaving blank space.
+                    Box(
+                        Modifier.width(150.dp).height(56.dp).clip(RoundedCornerShape(8.dp))
+                            .background(colors.panel.copy(alpha = 0.5f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text("NO WEAPONS\nplay BATTLE to fight", color = colors.textDim, fontFamily = font,
+                            fontSize = 10.sp, textAlign = TextAlign.Center, letterSpacing = 1.sp)
+                    }
+                }
             }
             Spacer(Modifier.height(6.dp))
         }
@@ -394,19 +406,22 @@ private fun ControlButton(glyph: String, tint: Color, modifier: Modifier = Modif
     ) { Text(glyph, color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold) }
 }
 
-/** A weapon-bay trigger: shows the equipped item's name; dims + disables while cooling down. */
+/** A weapon-bay trigger: bold bay label (ATTACK/SUPPORT) over the equipped item's name; dims on cooldown. */
 @Composable
-private fun BayButton(name: String, ready: Boolean, tint: Color, onClick: () -> Unit) {
+private fun BayButton(label: String, name: String, ready: Boolean, tint: Color, onClick: () -> Unit) {
     val font = OverdriveTheme.font
     Box(
-        Modifier.width(80.dp).height(56.dp).clip(RoundedCornerShape(8.dp))
-            .background(if (ready) tint else tint.copy(alpha = 0.3f))
+        Modifier.width(96.dp).height(56.dp).clip(RoundedCornerShape(8.dp))
+            .background(if (ready) tint else tint.copy(alpha = 0.35f))
             .clickable(enabled = ready, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Text(name.take(14), color = Color.White, fontFamily = font, fontSize = 10.sp,
-            fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, maxLines = 2,
-            modifier = Modifier.padding(horizontal = 4.dp))
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(label, color = Color.White, fontFamily = font, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+            Text(name.take(13), color = Color.White.copy(alpha = 0.9f), fontFamily = font, fontSize = 9.sp,
+                textAlign = TextAlign.Center, maxLines = 1, modifier = Modifier.padding(horizontal = 4.dp))
+            if (!ready) Text("…", color = Color.White, fontFamily = font, fontSize = 9.sp)
+        }
     }
 }
 
