@@ -71,6 +71,18 @@ object ItemRepository {
         android.util.Log.i("OverdriveX",
             "ItemRepository: ${catalog.size} items ($atk atk/$sup sup/$spc special), " +
             "${effects.size} effects, $nUp upgrades. e.g. $sample")
+        // Verify the real per-item combat values resolved (the values must differ per weapon).
+        listOf("base_machine_gun","base_sniper","base_shotgun","base_emp","base_mine",
+               "base_shield","base_boost","base_tractor_beam").forEach { id ->
+            byId[id]?.combat?.let { c ->
+                android.util.Log.i("OverdriveX", "  combat $id: ${c.interaction} " +
+                    "dps=${c.sustainedDps}/chg=${c.chargedDps}/flat=${c.flatDamage} " +
+                    "e/s=${c.energyPerS}/chgE=${c.energyChargePerS} " +
+                    "chargeLim=${c.chargeLimitS} cd=${c.cooldownMinS}..${c.cooldownMaxS} " +
+                    "heat=${c.heatupRate}/${c.cooldownRate} recharge=${c.rechargeS} " +
+                    "shield=${c.shieldBlockPct} boost=${c.boostSpeedAdd} tractor=${c.tractorRatio}")
+            }
+        }
     }
 
     /** Flatten the full `extends` chain (real -> real -> abstract): most-derived field wins. */
@@ -80,6 +92,31 @@ object ItemRepository {
         var cur: RawItem? = raw; val seen = HashSet<String>()
         while (cur != null && seen.add(cur.id)) { chain.add(cur); cur = cur.extends?.let { rawById[it] } }
         fun <T> first(sel: (RawItem) -> T?): T? = chain.firstNotNullOfOrNull(sel)
+        // cooldown_data may be defined on the base and partially overridden up the chain — resolve per field.
+        fun cd(sel: (dev.overdrive.data.model.RawCooldown) -> Double?): Double? =
+            chain.firstNotNullOfOrNull { it.cooldownData?.let(sel) }
+        val combat = dev.overdrive.data.model.ItemCombat(
+            interaction = dev.overdrive.data.model.Interaction.from(first { it.interactionStyle }),
+            sustainedDps = first { it.damagePerTargetPerS } ?: first { it.scriptConfig?.damagePerTargetPerS } ?: 0.0,
+            chargedDps = first { it.damageChargedPerS } ?: 0.0,
+            flatDamage = first { it.damagePerTarget } ?: 0.0,
+            damageType = first { it.damageType },
+            maxDistFalloff = first { it.damageMultAtMaxDist } ?: 1.0,
+            energyPerS = first { it.energyUsePerS } ?: 0.0,
+            energyChargePerS = first { it.energyChargePerS } ?: 0.0,
+            baseEnergyCost = first { it.baseEnergyCost } ?: 0.0,
+            chargeLimitS = cd { it.chargeLimitS } ?: 0.0,
+            cooldownMinS = cd { it.cooldownTimeMinS } ?: 0.0,
+            cooldownMaxS = cd { it.cooldownTimeMaxS } ?: 0.0,
+            heatupRate = cd { it.heatupRatePct } ?: 0.0,
+            overheatRate = cd { it.overheatRatePct } ?: 0.0,
+            cooldownRate = cd { it.cooldownRatePct } ?: 0.0,
+            rechargeS = cd { it.rechargeTimeS } ?: first { it.rechargeTimeS } ?: 0.0,
+            shieldBlockPct = first { it.shieldBlockedPct } ?: 0.0,
+            boostSpeedAdd = first { it.boostSpeedAddition } ?: 0.0,
+            tractorRatio = first { it.tractorBeamRatio } ?: 0.0,
+            deceleration = first { it.deceleration } ?: 0.0,
+        )
         return GameItem(
             id = raw.id,
             bay = Bay.from(first { it.bay }),
@@ -100,6 +137,7 @@ object ItemRepository {
             audioPackage = first { it.audioPackage },
             sourceEffects = chain.firstOrNull { it.sourceEffects.isNotEmpty() }?.sourceEffects ?: emptyList(),
             targeter = first { it.targeter }?.toTargeter(),
+            combat = combat,
             vehicleRestriction = chain.firstOrNull { it.vehicleRestriction.isNotEmpty() }?.vehicleRestriction ?: emptyList(),
             useClass = first { it.useClass },
             isAbstract = isAbstract,
@@ -146,7 +184,8 @@ object ItemRepository {
      * the real Gen1/car-specific weapons). `ZFXDisable` and the blank `NukeParentShortRange*` rows
      * fail the name check.
      */
-    fun equippable(item: GameItem): Boolean = named(item) && item.detailImage != null
+    fun equippable(item: GameItem): Boolean =
+        named(item) && item.detailImage != null && item.combat.flatDamage < 9999   // exclude instakill mode weapons (OneShotKillGun, pulse-ram)
 
     /**
      * Real, equippable weapons in [bay] the given car may equip (empty restriction = universal),
@@ -222,6 +261,7 @@ object ItemRepository {
 
     private fun RawTargeter.toTargeter() = Targeter(
         type = type, length = length ?: 0.0, theta = theta ?: 0.0, radius = radius ?: 0.0,
+        halfWidth = halfWidth ?: 0.0, maxDistance = maxDistance ?: 0.0,
         singleTarget = singleTarget,
     )
 

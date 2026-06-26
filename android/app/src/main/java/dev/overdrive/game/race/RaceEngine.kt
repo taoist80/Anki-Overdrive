@@ -108,9 +108,20 @@ class RaceEngine(private val mgr: CarManager) {
     private var segsPerLap = 0                // segments in one physical lap, measured during the scan
     private var lapTarget = 3
     private var finished = false
+    private var opponentProfile: DriverProfile? = null          // campaign opponent commander's driver stats
+    private val aiProfiles = HashMap<String, DriverProfile>()    // per-AI-car profile (assigned in arm)
+    /** The Tournament mission this race belongs to ("" = Open Play); carried to the results screen. */
+    var campaignMissionId: String = ""
+    /** The opponent commander's display name (for the victory "DEFEATED: …"), null in Open Play. */
+    val opponentName: String? get() = opponentProfile?.displayName
+    /** Did the player finish first? (used by the victory screen). */
+    val playerWon: Boolean get() = state.standings.firstOrNull()?.isPlayer == true
 
     /** Set the laps-to-finish for the next race (from Match Setup). 0 = endless. */
     fun setLapTarget(n: Int) { lapTarget = n.coerceAtLeast(0) }
+
+    /** Set the Tournament opponent commander's driver profile (null = Open Play / generic rivals). */
+    fun setCampaignOpponent(profile: DriverProfile?) { opponentProfile = profile }
     val combat = Combat()
 
     init {
@@ -132,6 +143,14 @@ class RaceEngine(private val mgr: CarManager) {
         tele.clear(); targetSpeed.clear(); lastPiece.clear()
         connected.forEach { c ->
             tele[c.address] = CarTelemetry(c.address, c.name, isPlayer = c.address == playerAddr, modelId = c.modelId)
+        }
+        // Assign the campaign opponent commander to the first AI car (extra cars stay generic rivals),
+        // and surface its name on that car so the HUD/standings read "Crashbot", "Roofus", etc.
+        aiProfiles.clear()
+        tele.keys.filter { it != playerAddr }.forEachIndexed { i, addr ->
+            val p = if (i == 0) (opponentProfile ?: DriverProfile.DEFAULT) else DriverProfile.DEFAULT
+            aiProfiles[addr] = p
+            p.displayName?.let { nm -> tele[addr]?.let { tele[addr] = it.copy(name = nm) } }
         }
         startedAt = 0L
         Log.i(TAG, "Race.arm: ${connected.size} cars [${connected.joinToString { it.name }}], player=$playerAddr")
@@ -182,7 +201,11 @@ class RaceEngine(private val mgr: CarManager) {
         startedAt = SystemClock.elapsedRealtime()
         var aiIdx = 0
         tele.keys.forEach { addr ->
-            targetSpeed[addr] = if (addr == playerAddr) PLAYER_START else (AI_BASE + (aiIdx++ % 4) * AI_SPREAD)
+            targetSpeed[addr] = if (addr == playerAddr) PLAYER_START else {
+                // AI base speed scaled by the car's commander profile (tier/level), plus a small spread.
+                val scale = (aiProfiles[addr] ?: DriverProfile.DEFAULT).speedScale
+                (AI_BASE * scale).toInt() + (aiIdx++ % 4) * AI_SPREAD
+            }
             lastPiece[addr] = -1; lapStartSeg[addr] = 0   // count race laps fresh from the staged start line
             mgr.setLaneOffset(addr, 0f)
         }
@@ -201,6 +224,8 @@ class RaceEngine(private val mgr: CarManager) {
             energyMult = MetaGame.energyMult(lvl("energy")),
         )
         combat.init(roster, prof.loadoutFor(playerCarId), weaponsEnabled, mods)
+        aiProfiles.forEach { (addr, p) -> combat.setProfile(addr, p) }   // AI rivals drive per their commander stats
+        opponentProfile?.let { Log.i(TAG, "Race.start: opponent=${it.displayName} speed×${it.speedScale} aggr=${it.aggression} weapons=${it.weaponsOn}") }
         Log.i(TAG, "Race.start: driving ${tele.size} cars, targets=$targetSpeed")
         publish(running = true)
         main.removeCallbacks(control)
@@ -284,7 +309,7 @@ class RaceEngine(private val mgr: CarManager) {
             tele.keys.forEach { addr ->
                 val t = tele[addr]
                 if (t?.offTrack == true || combat.isDisabled(addr) || (scanning && addr in staged)) {
-                    mgr.drive(addr, 0)   // off-track, disabled, or staged at the line — hold stopped
+                    mgr.drive(addr, 0, STAGE_BRAKE)   // off-track, disabled, or staged — hard-brake to a crisp stop
                 } else {
                     val s = effectiveSpeed(addr, t?.roadPieceId ?: -1)
                     if (s > 0) mgr.drive(addr, s, ACCEL) else mgr.drive(addr, 0)
