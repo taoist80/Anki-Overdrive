@@ -80,7 +80,11 @@ class RaceEngine(private val mgr: CarManager) {
         const val CONTROL_MS = 250L     // re-send cadence for target speeds
         const val FINISH_PIECE_ID = 33  // the unique start/finish piece ('B', isFinishLine) from tracks.json
         const val LANE_HEAL_MM = 12f    // re-send a lane change if the car is >this far from its target
-        const val SCAN_SPEED = 300      // mm/s during the track-scan lap (slow = reliable localization)
+        const val SCAN_SPEED = 160      // mm/s during the scan lap — slow so a staged car halts ON the
+                                        // start piece. The car only reports roadPieceId=33 at the finish
+                                        // marker (~2/3 into the 0.22m 'B' piece); at 300mm/s the BLE
+                                        // report+command latency + coast carried it onto the NEXT piece.
+        const val STAGE_BRAKE = 2500    // mm/s^2 hard brake when staging (vs gentle race ACCEL) — minimize overshoot
         const val SCAN_TIMEOUT_MS = 45_000L  // give up waiting for every car to complete its scan lap
         const val SCAN_MIN_TRANSITIONS = 10  // a car counts as "mapped" after this many segments (track-agnostic; finish piece may not be 33)
     }
@@ -338,7 +342,7 @@ class RaceEngine(private val mgr: CarManager) {
             // car starts the race from the same place (fair start), wherever it began the scan.
             val stageNow = scanning && addr !in staged && newPiece == FINISH_PIECE_ID && laps >= 1
             if (stageNow) {
-                staged.add(addr); mgr.drive(addr, 0)
+                staged.add(addr); mgr.drive(addr, 0, STAGE_BRAKE)   // hard brake so it rests on the start piece
                 Log.i(TAG, "Race.scan: ${t.name} staged at start line")
             } else if (state.running || (scanning && addr !in staged)) {
                 mgr.drive(addr, effectiveSpeed(addr, newPiece), ACCEL) // react to curve immediately
