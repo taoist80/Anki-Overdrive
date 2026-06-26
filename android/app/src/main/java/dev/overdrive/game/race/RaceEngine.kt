@@ -69,6 +69,7 @@ class RaceEngine(private val mgr: CarManager) {
         const val MAX_SPEED = 900       // mm/s at full throttle (curves auto-cap below)
         const val SPEED_CEIL = 1000     // hard straight-line ceiling incl. SPEED upgrade (hardware-safe)
         const val CURVE_SPEED = 450     // mm/s ceiling while on a curve piece
+        const val HOLD_DT_S = 0.08f     // weapon charge tick (matches the HUD's ~80ms hold loop)
         const val PLAYER_START = 500    // mm/s default when the race starts
         const val AI_BASE = 440         // mm/s base for AI rivals (varied per car)
         const val AI_SPREAD = 40        // mm/s step between AI rivals
@@ -233,9 +234,14 @@ class RaceEngine(private val mgr: CarManager) {
     }
 
     /** Fire the player's attack bay (HUD top trigger) — resolves a target + applies the weapon. */
-    fun fireAttack() { playerAddr?.let { combat.fire(it, Bay.ATTACK, tele.values); publish() } }
+    /** Player holds the fire button: charge the bay (drains energy live). Returns 0..1 charge, -1 if unavailable. */
+    fun holdAttack(): Float = playerAddr?.let { combat.holdTick(it, Bay.ATTACK, HOLD_DT_S).also { publish() } } ?: -1f
+    fun holdSupport(): Float = playerAddr?.let { combat.holdTick(it, Bay.SUPPORT, HOLD_DT_S).also { publish() } } ?: -1f
+
+    /** Player releases the fire button: fire the bay scaled by the charge built up while holding. */
+    fun fireAttack() { playerAddr?.let { combat.release(it, Bay.ATTACK, tele.values); publish() } }
     /** Fire the player's support bay (HUD bottom trigger) — shield/boost/etc. */
-    fun fireSupport() { playerAddr?.let { combat.fire(it, Bay.SUPPORT, tele.values); publish() } }
+    fun fireSupport() { playerAddr?.let { combat.release(it, Bay.SUPPORT, tele.values); publish() } }
 
     /** Curve-aware + combat-aware target: cap on curves, then scale by combat (boost/tractor/disabled). */
     private fun effectiveSpeed(addr: String, pieceId: Int): Int {

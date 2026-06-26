@@ -25,6 +25,8 @@ class Combat {
         const val ENERGY_REGEN_PER_S = 14f      // energy/sec passive regen
         const val RESPAWN_MS = 2600L            // spin-out duration when disabled
         const val MIN_COOLDOWN_S = 0.6          // floor so 0-recharge items can't be spammed
+        const val CHARGE_FULL_S = 1.5f          // hold this long (energy permitting) to reach full charge
+        const val CHARGE_BONUS = 1.0f           // full charge adds ×1.0 to damage + effect duration (so ×2 total)
         const val SHIELD_BLOCK = 0.30f          // incoming damage multiplier while shielded
         const val BOOST_FACTOR = 1.40f          // self speed multiplier while boosting
         const val TRACTOR_FACTOR = 0.35f        // speed multiplier while caught (allow_speed_change=false)
@@ -47,6 +49,7 @@ class Combat {
         var lastAiFireAt = 0L
         val equipped = HashMap<Bay, String>()     // bay -> itemId
         val readyAt = HashMap<Bay, Long>()        // bay -> cooldown-until ms
+        val charge = HashMap<Bay, Float>()        // bay -> 0..1 charge accrued while the fire button is held
         val effects = ArrayList<ActiveEffect>()
         val disabled: Boolean get() = SystemClock.elapsedRealtime() < disabledUntil
     }
@@ -145,15 +148,71 @@ class Combat {
         return true
     }
 
+    /**
+     * Hold-to-charge (player): while the fire button is held, drain the weapon's energy at its own
+     * configured rate ([GameItem.energyUsePerS] from items.json) and build a 0..1 charge. Returns the
+     * current charge, or -1 if the bay can't charge (no weapon / cooling down / disabled / weapons-free
+     * mode). Heavier weapons drain faster, so they charge "more expensively" — the per-weapon variation
+     * the values give us for free. Charge stops growing once energy hits 0.
+     */
+    fun holdTick(addr: String, bay: Bay, dtS: Float): Float {
+        if (!weaponsEnabled) return -1f
+        val c = cars[addr] ?: return -1f
+        if (c.disabled || !running) return -1f
+        val itemId = c.equipped[bay] ?: return -1f
+        val item = ItemRepository.item(itemId) ?: return -1f
+        if (SystemClock.elapsedRealtime() < (c.readyAt[bay] ?: 0L)) return -1f   // cooling down
+        if (c.energy > 0f) {
+            val drain = item.energyUsePerS.toFloat().coerceAtLeast(6f) * dtS
+            c.energy = (c.energy - drain).coerceAtLeast(0f)
+            c.charge[bay] = ((c.charge[bay] ?: 0f) + dtS / CHARGE_FULL_S).coerceAtMost(1f)
+        }
+        return c.charge[bay] ?: 0f
+    }
+
+    /**
+     * Release the bay (player): fire the equipped weapon scaled by the charge built while holding —
+     * damage and effect duration are ×(1 + charge·[CHARGE_BONUS]). A quick tap (no charge accrued) still
+     * fires at base and pays the base energy cost; a held shot has already paid via [holdTick]. Sets the
+     * cooldown. Returns true if it fired.
+     */
+    fun release(addr: String, bay: Bay, telemetry: Collection<CarTelemetry>): Boolean {
+        if (!weaponsEnabled) return false
+        val c = cars[addr] ?: return false
+        if (c.disabled || !running) { c.charge.remove(bay); return false }
+        val itemId = c.equipped[bay] ?: return false
+        val item = ItemRepository.item(itemId) ?: return false
+        val now = SystemClock.elapsedRealtime()
+        if (now < (c.readyAt[bay] ?: 0L)) { c.charge.remove(bay); return false }   // cooling down
+        val charge = c.charge.remove(bay) ?: 0f
+        if (charge < 0.05f) {                          // instant tap: pay base cost up front
+            val cost = item.energyUsePerS.toFloat().coerceAtLeast(6f)
+            if (c.energy < cost) return false
+            c.energy -= cost
+        }                                              // held shot already drained energy in holdTick
+        val cooldownMs = (maxOf(item.rechargeTimeS, MIN_COOLDOWN_S) * 1000).toLong()
+        c.readyAt[bay] = now + cooldownMs + (item.activationDelayS * 1000).toLong()
+        val scale = 1f + charge * CHARGE_BONUS
+        when {
+            isSelf(item) -> applySelf(c, item, scale)
+            else -> {
+                val targets = resolveTargets(c, item, telemetry)
+                targets.forEach { applyHit(c, it, item, now, scale) }
+                Log.i(TAG, "fire P1 ${item.id} charge=$charge (x$scale) -> ${targets.size} target(s)")
+            }
+        }
+        return true
+    }
+
     /** Self-affecting items (the targeter points at the firer): shield/boost/e-brake/reverse. */
     private fun isSelf(item: GameItem): Boolean =
         item.targeter?.type == "self" || item.type in setOf("shield", "boost", "e-brake", "reverse_drive")
 
-    private fun applySelf(c: CombatCar, item: GameItem) {
+    private fun applySelf(c: CombatCar, item: GameItem, scale: Float = 1f) {
         val now = SystemClock.elapsedRealtime()
         when (item.type) {
-            "boost" -> c.boostUntil = now + 2500
-            "shield" -> c.shieldUntil = now + 4000
+            "boost" -> c.boostUntil = now + (2500 * scale).toLong()    // charged boost lasts longer
+            "shield" -> c.shieldUntil = now + (4000 * scale).toLong()  // charged shield lasts longer
             else -> { /* e-brake / reverse-drive: no combat effect modeled */ }
         }
     }
@@ -169,18 +228,18 @@ class Combat {
             }
         )
 
-    private fun applyHit(from: CombatCar, targetAddr: String, item: GameItem, now: Long) {
+    private fun applyHit(from: CombatCar, targetAddr: String, item: GameItem, now: Long, scale: Float = 1f) {
         val t = cars[targetAddr] ?: return
         if (t.disabled) return
-        var dmg = item.damagePerSec.toFloat()   // real per-hit damage; 0 for pure-effect weapons
+        var dmg = item.damagePerSec.toFloat() * scale   // real per-hit damage (×charge); 0 for pure-effect weapons
         if (from.isPlayer) dmg *= playerMods.damageMult   // player's WEAPONS upgrade
         if (now < t.shieldUntil) dmg *= SHIELD_BLOCK
         if (t.isPlayer) dmg *= playerMods.defenseMult     // player's DEFENSE upgrade (incoming)
         if (dmg > 0f) t.health -= dmg
-        // Apply the weapon's status effects to the target for their configured duration.
+        // Apply the weapon's status effects to the target for their configured duration (×charge).
         for (effId in effectsOf(item)) {
             val eff = ItemRepository.effect(effId) ?: continue
-            val durMs = ((if (eff.durationS > 0) eff.durationS else 1.5) * 1000).toLong()
+            val durMs = ((if (eff.durationS > 0) eff.durationS else 1.5) * 1000 * scale).toLong()
             t.effects.add(ActiveEffect(effId, now + durMs))
         }
         if (t.health <= 0f) {

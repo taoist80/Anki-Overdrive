@@ -45,6 +45,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import dev.overdrive.AnkiCarManagerHolder
 import dev.overdrive.CarCategory
 import dev.overdrive.CarState
@@ -346,17 +356,40 @@ fun CountdownScreen(nav: OverdriveNav) {
     val font = OverdriveTheme.font
     val engine = remember { RaceEngineHolder.engine }
     remember { RoadPieces.load(ctx); 0 }   // ensure curve map is ready before driving
+
+    // 4.0.4 behaviour: an automatic 3·2·1·GO countdown — the race starts on GO with no button press.
+    // n: 3,2,1 then 0 = GO. engine.start() fires on GO, then we cross-fade into the HUD.
+    var n by remember { mutableIntStateOf(3) }
+    LaunchedEffect(Unit) {
+        for (i in 3 downTo 1) { n = i; delay(900) }
+        n = 0                       // GO
+        engine.start()
+        delay(750)
+        nav.go(Routes.InRaceHud)
+    }
+    // Each tick pops in (scale + fade), matching the original countdown punch.
+    val pop = remember { Animatable(1.6f) }
+    LaunchedEffect(n) { pop.snapTo(1.55f); pop.animateTo(1f, tween(380)) }
+
+    val isGo = n == 0
     OverdriveBackground(heroImage = null) {
-        Column(
-            Modifier.fillMaxSize().padding(28.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            Text("GET READY", fontFamily = font, color = colors.textDim, fontSize = 18.sp, letterSpacing = 4.sp)
-            Spacer(Modifier.height(16.dp))
-            Text("3", fontFamily = font, color = colors.gold, fontSize = 140.sp, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(24.dp))
-            PrimaryButton("Go!", { engine.start(); nav.go(Routes.InRaceHud) }, accent = ButtonAccent.Gold)
+        Box(Modifier.fillMaxSize().padding(28.dp), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    if (isGo) "" else "GET READY",
+                    fontFamily = font, color = colors.textDim, fontSize = 18.sp, letterSpacing = 4.sp,
+                )
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    if (isGo) "GO!" else "$n",
+                    fontFamily = font, color = if (isGo) colors.success else colors.gold,
+                    fontSize = 150.sp, fontWeight = FontWeight.Bold,
+                    modifier = Modifier.graphicsLayer {
+                        scaleX = pop.value; scaleY = pop.value
+                        alpha = (2f - pop.value).coerceIn(0f, 1f)
+                    },
+                )
+            }
         }
     }
 }
@@ -453,8 +486,10 @@ fun InRaceHudScreen(nav: OverdriveNav) {
                 val hud = st.playerHud
                 if (hud != null) {
                     val atk = hud.bays.getOrNull(0); val sup = hud.bays.getOrNull(1)
-                    FireButton("ATTACK", atk?.itemId, atk?.itemName ?: "—", atk?.ready != false, colors.danger) { engine.fireAttack() }
-                    FireButton("SUPPORT", sup?.itemId, sup?.itemName ?: "—", sup?.ready != false, colors.blue) { engine.fireSupport() }
+                    FireButton("ATTACK", atk?.itemId, atk?.itemName ?: "—", atk?.ready != false, colors.danger,
+                        onHold = { engine.holdAttack() }, onRelease = { engine.fireAttack() })
+                    FireButton("SUPPORT", sup?.itemId, sup?.itemName ?: "—", sup?.ready != false, colors.blue,
+                        onHold = { engine.holdSupport() }, onRelease = { engine.fireSupport() })
                 } else {
                     // RACE / TIME TRIAL are weapon-free — say so instead of leaving blank space.
                     Box(
@@ -521,23 +556,38 @@ private fun ControlButton(glyph: String, tint: Color, modifier: Modifier = Modif
  * (attack red / support blue), the equipped weapon's canister art centered, label below. Dims on cooldown.
  */
 @Composable
-private fun FireButton(label: String, itemId: String?, name: String, ready: Boolean, accent: Color, onClick: () -> Unit) {
+private fun FireButton(
+    label: String, itemId: String?, name: String, ready: Boolean, accent: Color,
+    onHold: () -> Unit, onRelease: () -> Unit,
+) {
     val colors = OverdriveTheme.colors
     val font = OverdriveTheme.font
     val icon = rememberAsset(ItemRepository.imageAsset(itemId))
+    val scope = rememberCoroutineScope()
+    var held by remember { mutableStateOf(false) }
     val a = if (ready) 1f else 0.35f
     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp)) {
         Box(
             Modifier.size(66.dp).clip(CircleShape)
-                .background(Brush.radialGradient(listOf(accent.copy(alpha = 0.5f * a), Color(0x00000000))))
-                .border(2.dp, accent.copy(alpha = a), CircleShape)
-                .clickable(enabled = ready, onClick = onClick),
+                // brighter glow + thicker ring while held (charging)
+                .background(Brush.radialGradient(listOf(accent.copy(alpha = (if (held) 0.85f else 0.5f) * a), Color(0x00000000))))
+                .border(if (held) 3.dp else 2.dp, accent.copy(alpha = a), CircleShape)
+                // press-and-hold: tick the charge (~80ms) while down, fire the charged shot on release
+                .pointerInput(ready) {
+                    if (!ready) return@pointerInput
+                    detectTapGestures(onPress = {
+                        held = true
+                        val job = scope.launch { while (isActive) { onHold(); delay(80) } }
+                        tryAwaitRelease()
+                        job.cancel(); held = false; onRelease()
+                    })
+                },
             contentAlignment = Alignment.Center,
         ) {
             if (icon != null) Image(icon, null, Modifier.size(40.dp), contentScale = ContentScale.Fit, alpha = a)
             else Text(label.take(1), color = accent.copy(alpha = a), fontFamily = font, fontSize = 22.sp, fontWeight = FontWeight.Bold)
         }
-        Text(label, color = accent.copy(alpha = a), fontFamily = font, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+        Text(if (held) "HOLD…" else label, color = accent.copy(alpha = a), fontFamily = font, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
         Text(name.take(12), color = colors.textDim, fontFamily = font, fontSize = 8.sp, maxLines = 1, textAlign = TextAlign.Center)
     }
 }
