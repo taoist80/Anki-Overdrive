@@ -1,11 +1,12 @@
 package dev.overdrive.game
 
-import kotlin.random.Random
+import dev.overdrive.data.ItemRepository
 
 /**
  * Client-side reward economy (the backend just persists the resulting profile). Loot rolls and
- * upgrade costs live here. Uses a curated pool of real Overdrive items for now; wiring the full
- * items.json/lootDrops.json tables is a Phase 5 refinement.
+ * upgrade costs live here. As of Phase 7 the item catalog + loot draw from the real
+ * [ItemRepository] (items.json); the generic [UPGRADE_TRACKS] below are the fallback for the
+ * pre-Phase-9 garage and get replaced by real per-vehicle upgrades (upgradeData.json) in Phase 9.
  */
 object MetaGame {
 
@@ -17,31 +18,13 @@ object MetaGame {
         val rarityColor: Long,
     )
 
-    private val ITEM_POOL = listOf(
-        "nitro" to "Nitro Boost",
-        "tire_mod" to "Tire Mod",
-        "plasma_cannon" to "Plasma Cannon",
-        "emp" to "EMP Blast",
-        "energy_shield" to "Energy Shield",
-        "ram_plow" to "Ram Plow",
-        "golden_sniper" to "Golden Sniper",
-        "ice_mine" to "Ice Mine",
-    )
+    /** Display name for an item id, via the real catalog. */
+    fun itemName(itemId: String): String = ItemRepository.name(itemId)
 
-    fun itemName(itemId: String): String =
-        ITEM_POOL.firstOrNull { it.first == itemId }?.second ?: itemId
-
-    /** Roll a loot box: rarity-weighted coins + a random item. */
-    fun rollLoot(): LootReward {
-        val r = Random.nextInt(100)
-        val (rarity, color, coins) = when {
-            r < 60 -> Triple("COMMON", 0xFF8AA0B6, (40..120).random())
-            r < 88 -> Triple("RARE", 0xFF22B7E6, (100..250).random())
-            r < 98 -> Triple("EPIC", 0xFFB060FF, (250..450).random())
-            else -> Triple("LEGENDARY", 0xFFE6B800, (450..800).random())
-        }
-        val (id, name) = ITEM_POOL.random()
-        return LootReward(coins, id, name, rarity, color)
+    /** Roll a loot box: rarity-weighted coins + a real catalog item (car-eligible if [vehicleName] set). */
+    fun rollLoot(vehicleName: String? = null): LootReward {
+        val r = ItemRepository.rollLoot(vehicleName)
+        return LootReward(r.coins, r.itemId, ItemRepository.name(r.itemId), r.rarity, r.rarityColor)
     }
 
     data class UpgradeTrack(val key: String, val name: String, val baseCost: Int, val maxLevel: Int = 5)

@@ -29,6 +29,7 @@ data class Profile(
     val missions: Map<String, MissionProgress> = emptyMap(),
     val inventory: Map<String, Int> = emptyMap(),       // itemId -> count (loot rewards)
     val vehicleUpgrades: Map<String, Int> = emptyMap(), // "<carId>:<track>" -> level
+    val loadout: Map<String, String> = emptyMap(),      // "<carId>:<bay>" -> equipped itemId
 ) {
     val level: Int get() = 1 + xp / 1000
     val totalStars: Int get() = missions.values.sumOf { it.completedTaskIds.size }
@@ -36,6 +37,11 @@ data class Profile(
     fun completedTasks(missionId: String): Set<String> = missions[missionId]?.completedTaskIds ?: emptySet()
     fun itemCount(itemId: String): Int = inventory[itemId] ?: 0
     fun upgradeLevel(key: String): Int = vehicleUpgrades[key] ?: 0
+    /** The item equipped in [bay] (e.g. "attack"/"support") of car [carId], or null. */
+    fun equipped(carId: Int, bay: String): String? = loadout["$carId:$bay"]
+    /** All items equipped on a car, by bay name. */
+    fun loadoutFor(carId: Int): Map<String, String> =
+        loadout.filterKeys { it.startsWith("$carId:") }.mapKeys { it.key.substringAfter(':') }
 }
 
 /**
@@ -99,6 +105,15 @@ object ProfileRepository {
         val inv = profile.inventory.toMutableMap()
         inv[itemId] = (inv[itemId] ?: 0) + count
         profile = profile.copy(inventory = inv)
+        persist(ctx)
+    }
+
+    /** Equip [itemId] into [bay] of car [carId] (or clear the slot when itemId is null); persists + syncs. */
+    fun equipItem(ctx: Context, carId: Int, bay: String, itemId: String?) {
+        val lo = profile.loadout.toMutableMap()
+        val key = "$carId:$bay"
+        if (itemId == null) lo.remove(key) else lo[key] = itemId
+        profile = profile.copy(loadout = lo)
         persist(ctx)
     }
 

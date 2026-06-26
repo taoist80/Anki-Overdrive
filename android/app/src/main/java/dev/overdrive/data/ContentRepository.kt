@@ -70,6 +70,8 @@ object ContentRepository {
         val challenges: List<RawStarChallenge> = json.decodeFromString(read(ctx, "gamedata/star_challenges.json"))
         starChallengesById = challenges.associateBy { it.id }
 
+        ItemRepository.load(ctx)   // real item/weapon/loot/upgrade catalog (Phase 7)
+
         loaded = true
     }
 
