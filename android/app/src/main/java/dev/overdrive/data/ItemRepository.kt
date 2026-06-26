@@ -38,11 +38,13 @@ object ItemRepository {
     var upgradesByTarget: Map<String, List<RawUpgrade>> = emptyMap(); private set
 
     private var strings: Strings = Strings.EMPTY
+    private var bundledImages: Set<String> = emptySet()   // filenames present in assets/items/
 
     @Synchronized
     fun load(ctx: Context) {
         if (loaded) return
         strings = Strings.load(ctx, "gamedata/asset-strings-en.json")
+        bundledImages = (ctx.assets.list("items") ?: emptyArray()).toSet()
 
         val file = json.decodeFromString<ItemsFile>(read(ctx, "gamedata/items.json"))
         bays = file.itemBays
@@ -106,6 +108,23 @@ object ItemRepository {
 
     fun item(id: String?): GameItem? = id?.let { byId[it] }
     fun effect(id: String): Effect? = effects[id]
+
+    /**
+     * Bundled asset path for an item's art: the large/medium detail render if we have it, else the
+     * weapon-class hitzone icon (always bundled), else null. Used by the HUD + garage to show weapons.
+     */
+    fun imageAsset(id: String?): String? {
+        val it = item(id) ?: return null
+        it.detailImage?.let { d ->
+            if ("$d-large.png" in bundledImages) return "items/$d-large.png"
+            if ("$d-medium.png" in bundledImages) return "items/$d-medium.png"
+        }
+        it.iconImage?.let { ic ->
+            if ("$ic.png" in bundledImages) return "items/$ic.png"
+            if ("ui_icon_$ic.png" in bundledImages) return "items/ui_icon_$ic.png"
+        }
+        return null
+    }
 
     /** Display name for an item id, resolved through the localized strings (falls back to a tidy id). */
     fun name(id: String?): String {

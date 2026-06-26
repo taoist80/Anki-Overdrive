@@ -47,6 +47,7 @@ import dev.overdrive.AnkiCarManagerHolder
 import dev.overdrive.CarState
 import dev.overdrive.GameData
 import dev.overdrive.data.ContentRepository
+import dev.overdrive.data.ItemRepository
 import dev.overdrive.ui.theme.rememberAsset
 import dev.overdrive.game.MetaGame
 import dev.overdrive.game.campaign.CampaignEngine
@@ -369,8 +370,8 @@ fun InRaceHudScreen(nav: OverdriveNav) {
                 val hud = st.playerHud
                 if (hud != null) {
                     val atk = hud.bays.getOrNull(0); val sup = hud.bays.getOrNull(1)
-                    BayButton("ATTACK", atk?.itemName ?: "—", atk?.ready != false, colors.orange) { engine.fireAttack() }
-                    BayButton("SUPPORT", sup?.itemName ?: "—", sup?.ready != false, colors.gold) { engine.fireSupport() }
+                    BayButton("ATTACK", atk?.itemId, atk?.itemName ?: "—", atk?.ready != false, colors.orange) { engine.fireAttack() }
+                    BayButton("SUPPORT", sup?.itemId, sup?.itemName ?: "—", sup?.ready != false, colors.gold) { engine.fireSupport() }
                 } else {
                     // RACE / TIME TRIAL are weapon-free — say so instead of leaving blank space.
                     Box(
@@ -406,10 +407,11 @@ private fun ControlButton(glyph: String, tint: Color, modifier: Modifier = Modif
     ) { Text(glyph, color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold) }
 }
 
-/** A weapon-bay trigger: bold bay label (ATTACK/SUPPORT) over the equipped item's name; dims on cooldown. */
+/** A weapon-bay trigger: the equipped weapon's icon + bay label (ATTACK/SUPPORT) + item name; dims on cooldown. */
 @Composable
-private fun BayButton(label: String, name: String, ready: Boolean, tint: Color, onClick: () -> Unit) {
+private fun BayButton(label: String, itemId: String?, name: String, ready: Boolean, tint: Color, onClick: () -> Unit) {
     val font = OverdriveTheme.font
+    val icon = rememberAsset(ItemRepository.imageAsset(itemId))
     Box(
         Modifier.width(96.dp).height(56.dp).clip(RoundedCornerShape(8.dp))
             .background(if (ready) tint else tint.copy(alpha = 0.35f))
@@ -417,10 +419,10 @@ private fun BayButton(label: String, name: String, ready: Boolean, tint: Color, 
         contentAlignment = Alignment.Center,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(label, color = Color.White, fontFamily = font, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-            Text(name.take(13), color = Color.White.copy(alpha = 0.9f), fontFamily = font, fontSize = 9.sp,
+            if (icon != null) Image(icon, null, Modifier.height(22.dp), contentScale = ContentScale.Fit)
+            Text(label, color = Color.White, fontFamily = font, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+            Text(name.take(13), color = Color.White.copy(alpha = 0.9f), fontFamily = font, fontSize = 8.sp,
                 textAlign = TextAlign.Center, maxLines = 1, modifier = Modifier.padding(horizontal = 4.dp))
-            if (!ready) Text("…", color = Color.White, fontFamily = font, fontSize = 9.sp)
         }
     }
 }
