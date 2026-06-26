@@ -153,10 +153,23 @@ Design spec artifact (4.0.4 layout, app palette, real data): published this sess
      wired into `CarHero` (garage carousel) + `VehicleDetail`, falling back to `RacingName` text.
    • **Loot badges (38)** — `MetaGame.lootBadge(rarity,itemId)` → `ui/loot/Loot_<family>_<tier>.webp`; rendered in
      the `Overlay.LootReveal` crate. • **GarageItems** — inline weapon glyphs per inventory row.
+   **CROSS-BUILD ART DIG — DONE (`tools/extract_unity_art.py`, build + on-device verified).** Where 4.0.4's
+   Godot atlas lacks art, the OLDER builds carry it (all builds on disk + at https://chaostree.xyz/Games/Overdrive/):
+   • **DDL 2.6.10** uses RAMS manifests → **dead Anki CDN** (`*-rams.anki.com`); its OBB bundles only audio `.wem`.
+     NOT a local art source. • **Anki 3.4.0** (`overdrive.xapk` → `main.1502.obb`, a plain zip) bundles art directly
+     as **Unity AssetBundles** under `assets/rams/overdrive/asset-bundles/<name>` (no ext) — UnityPy reads them
+     (UnityPy 1.25 installed). Rich: `chapters`, `commander*` (incl. F&F dom/hobbs/letty/tej), `lootcrateimages`,
+     `background*`, `tracks`, `icons*`, item art. `extract_unity_art.py` pulls **14 commander portraits**
+     (`ui/commanders/<name>.png`) + the shared chapter bg (`ui/chapter_bg.webp`). **Wired:** opponent portrait in
+     **MissionDetail** (96dp) + **MissionSelect** thumbnail, matched by commander friendly-name then mission cutscene
+     name, graceful when absent. • **Chapter COVERS don't exist** (only one shared `ui_tournament_trackBackground`)
+     → tint-per-chapter is faithful. • **Data mismatch:** our campaign is the Drive **Gen2** ladder (27 opponents);
+     only ~5–6 (Metro/CrashBot/Brick/Charge/Vice) match a 3.4.0 portrait, so **full per-mission portraits = Phase-10
+     story-parity remap** (remap campaign to the Overdrive/F&F commanders, or load the F&F `foxtrot.xapk` campaign).
    **REMAINING:** (a) in-race **HUD rebuild** (hardest; `controller_overlay.webp` already carved — see below).
-   (b) Stub screens still text-only (Profile/avatars, Medals, Store, Tracks, CoinShop packs, Chapter covers) —
-   note **no chapter-cover / commander-portrait / avatar / medal art exists in the apk textures** (F&F portraits
-   likely in video/CDN); ProfileMedals could reuse the `Loot_*` badges. (c) per-brand racing-name colors (logos
+   (b) Stub screens still text-only (Profile/avatars, Medals, Store, Tracks, CoinShop packs) — avatars/medals have
+   **no art in 4.0.4 or 3.4.0 bundles** (ProfileMedals could reuse `Loot_*`); 3.4.0 `commanderdriver1/2`/`pa` could
+   serve as player avatars. (c) per-brand racing-name colors (logos
    cover most cars now). KEY LEVER (still true): centralized in `Theme.kt` + `Components.kt`.
    ASSETS (carve from 4.0.4 via `tools/extract_ctex_art.py` — extend it with a UI mode; same WebP carve):
    `Assets/Background/{base,extended}.png` (nebula bg), `Assets/BaseUI/simplegradient.png` (card gradient),

@@ -1,5 +1,6 @@
 package dev.overdrive.ui.screens
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -23,6 +24,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -40,6 +42,23 @@ import dev.overdrive.ui.components.OverdriveScaffold
 import dev.overdrive.ui.components.PrimaryButton
 import dev.overdrive.ui.components.StarRow
 import dev.overdrive.ui.theme.OverdriveTheme
+import dev.overdrive.ui.theme.rememberAsset
+import androidx.compose.ui.graphics.ImageBitmap
+
+/**
+ * The opponent's portrait, carved from the 3.4.0 commander AssetBundles (ui/commanders/<name>.png via
+ * extract_unity_art.py). Our Gen2 campaign ids carry no portrait, so we match by the commander's
+ * friendly name first, then the mission cutscene name — trying each and using whichever bundle exists.
+ * Most Gen2 opponents have no 3.4.0 portrait → returns null (the UI renders without one, gracefully).
+ */
+@Composable
+private fun rememberCommanderPortrait(friendlyName: String?, cutscene: String?): ImageBitmap? {
+    fun key(s: String?) = s?.substringAfterLast('_')?.takeIf { it.isNotBlank() }?.lowercase()
+        ?.let { "ui/commanders/$it.png" }
+    val byName = rememberAsset(key(friendlyName))
+    val byCutscene = rememberAsset(key(cutscene))
+    return byName ?: byCutscene
+}
 
 @Composable
 fun ChapterSelectScreen(nav: OverdriveNav) {
@@ -111,12 +130,18 @@ fun MissionSelectScreen(nav: OverdriveNav, chapterId: Int) {
                         .clickable { if (unlocked) nav.go(Routes.MissionDetail(mid)) },
                 ) { inner ->
                     Row(inner.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                        Column {
-                            Text("MISSION ${i + 1}", fontFamily = font, color = colors.textPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                            Text(
-                                if (unlocked) "vs ${cmdr?.friendlyName ?: mission?.opponent}  ·  ${mission?.gameType}" else "🔒 Locked",
-                                fontFamily = font, color = colors.textDim, fontSize = 12.sp,
-                            )
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            val portrait = rememberCommanderPortrait(cmdr?.friendlyName, mission?.cutscene)
+                            if (unlocked && portrait != null) {
+                                Image(portrait, null, Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)), contentScale = ContentScale.Crop)
+                            }
+                            Column {
+                                Text("MISSION ${i + 1}", fontFamily = font, color = colors.textPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                                Text(
+                                    if (unlocked) "vs ${cmdr?.friendlyName ?: mission?.opponent}  ·  ${mission?.gameType}" else "🔒 Locked",
+                                    fontFamily = font, color = colors.textDim, fontSize = 12.sp,
+                                )
+                            }
                         }
                         StarRow(earned = stars)
                     }
@@ -141,14 +166,24 @@ fun MissionDetailScreen(nav: OverdriveNav, missionId: String) {
     OverdriveScaffold(title = cmdr?.friendlyName ?: "Mission", onBack = { nav.back() }) { mod ->
         Column(mod.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             OverdrivePanel(Modifier.fillMaxWidth()) { inner ->
-                Column(inner) {
-                    Text("OPPONENT", fontFamily = font, color = colors.gold, fontSize = 11.sp, letterSpacing = 2.sp)
-                    Text(cmdr?.friendlyName ?: mission?.opponent ?: "?", fontFamily = font, color = colors.textPrimary, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                    Text(
-                        "Mode: ${mission?.gameType ?: "?"}   ·   Track: ${mission?.preferenceTrack ?: "?"}" +
-                            (cmdr?.preferenceVehicle?.takeIf { it.isNotBlank() }?.let { "   ·   Prefers: $it" } ?: ""),
-                        fontFamily = font, color = colors.textDim, fontSize = 12.sp,
-                    )
+                Row(inner.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    val portrait = rememberCommanderPortrait(cmdr?.friendlyName, mission?.cutscene)
+                    if (portrait != null) {
+                        Image(
+                            portrait, "Opponent",
+                            Modifier.size(96.dp).clip(RoundedCornerShape(12.dp)),
+                            contentScale = ContentScale.Crop,
+                        )
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text("OPPONENT", fontFamily = font, color = colors.gold, fontSize = 11.sp, letterSpacing = 2.sp)
+                        Text(cmdr?.friendlyName ?: mission?.opponent ?: "?", fontFamily = font, color = colors.textPrimary, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            "Mode: ${mission?.gameType ?: "?"}   ·   Track: ${mission?.preferenceTrack ?: "?"}" +
+                                (cmdr?.preferenceVehicle?.takeIf { it.isNotBlank() }?.let { "   ·   Prefers: $it" } ?: ""),
+                            fontFamily = font, color = colors.textDim, fontSize = 12.sp,
+                        )
+                    }
                 }
             }
 
