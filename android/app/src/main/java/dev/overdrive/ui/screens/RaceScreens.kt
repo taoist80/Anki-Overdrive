@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -67,6 +68,7 @@ import dev.overdrive.ui.theme.rememberAsset
 import dev.overdrive.game.MetaGame
 import dev.overdrive.game.campaign.CampaignEngine
 import dev.overdrive.game.race.RaceEngineHolder
+import dev.overdrive.game.race.DriverProfile
 import dev.overdrive.game.race.RoadPieces
 import dev.overdrive.nav.Overlay
 import dev.overdrive.nav.OverdriveNav
@@ -234,6 +236,14 @@ fun MatchSetupScreen(nav: OverdriveNav, mode: String, campaignMissionId: String)
                 {
                     engine.setPlayer(effectivePlayer)
                     engine.setLapTarget(lapCount)
+                    engine.campaignMissionId = campaignMissionId   // carry the Tournament mission to the results screen
+                    // Tournament: race the mission's opponent commander as the AI rival, driven per its
+                    // real vehicle_setup driver profile (purerace/race/battle × aggressive/defensive × tier).
+                    val oppId = campaignMissionId.takeIf { it.isNotBlank() }?.let { ContentRepository.missionsById[it]?.opponent }
+                    engine.setCampaignOpponent(oppId?.let { id ->
+                        val legacy = ContentRepository.commander(id)
+                        DriverProfile.fromSetup(id, ContentRepository.commander26(id)?.name, legacy?.vehicleSetup, legacy?.tier ?: 1, legacy?.vehicleLevel ?: 1)
+                    })
                     engine.arm(mode)
                     nav.go(Routes.TrackScan)
                 },
@@ -406,8 +416,8 @@ fun InRaceHudScreen(nav: OverdriveNav) {
     val rank = st.standings.indexOfFirst { it.isPlayer }.let { if (it >= 0) it + 1 else 1 }
     var throttle by remember { mutableFloatStateOf(0.55f) }  // ~495 mm/s of 900 max — safe-cornering default
 
-    // Race over (a car reached the lap target) -> standings/loot.
-    LaunchedEffect(st.finished) { if (st.finished) nav.go(Routes.RaceResults()) }
+    // Race over (a car reached the lap target) -> victory flourish, then results.
+    LaunchedEffect(st.finished) { if (st.finished) nav.go(Routes.GameOver) }
 
     // In-race view rebuilt 1:1 from 4.0.4's controller.scn: dark road ground + faint controller_overlay,
     // then three columns — vertical throttle (left) · car logo + position (center) · weapon buttons (right) —
@@ -462,10 +472,11 @@ fun InRaceHudScreen(nav: OverdriveNav) {
             // RIGHT ~38%: weapon buttons (combat) — three stacked bays, art-filled, energy fill, hold-to-charge.
             Column(Modifier.weight(0.38f).fillMaxHeight().padding(start = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (hud != null) {
+                    EnergyBar(hud.energy, Modifier.fillMaxWidth())
                     hud.bays.forEach { bay ->
                         val accent = when (bay.bay) { "attack" -> colors.danger; "support" -> colors.blue; else -> colors.gold }
                         WeaponButton(
-                            bay.bay.uppercase(), bay.itemId, bay.itemName, bay.ready, hud.energy / 100f, accent,
+                            bay.bay.uppercase(), bay.itemId, bay.itemName, bay.ready, bay.fillFrac, bay.interaction, bay.active, accent,
                             Modifier.fillMaxWidth().weight(1f),
                             onHold = { engine.holdBay(bay.bay) }, onRelease = { engine.fireBay(bay.bay) },
                         )
@@ -526,10 +537,34 @@ private fun ControlButton(glyph: String, tint: Color, modifier: Modifier = Modif
  * charge (~80ms) and drains energy live; release fires the charged shot. Glows holo while engaged, dims
  * on cooldown.
  */
+/** Slim global-energy bar above the weapon bays (per-bay fills now show charge/heat/cooldown). */
+@Composable
+private fun EnergyBar(energy: Float, modifier: Modifier = Modifier) {
+    val colors = OverdriveTheme.colors
+    val font = OverdriveTheme.font
+    val shape = RoundedCornerShape(6.dp)
+    Box(modifier.height(16.dp).clip(shape).background(Color(0x18FFFFFF))) {
+        Box(
+            Modifier.align(Alignment.CenterStart).fillMaxHeight().fillMaxWidth((energy / 100f).coerceIn(0f, 1f)).clip(shape)
+                .background(Brush.horizontalGradient(listOf(Color(0xFF6CC0FF), colors.blue))),
+        )
+        Text("ENERGY", fontFamily = font, color = Color(0xFF0C1830), fontSize = 8.sp, fontWeight = FontWeight.Bold,
+            letterSpacing = 2.sp, modifier = Modifier.align(Alignment.Center))
+    }
+}
+
+/**
+ * The 4.0.4 weapon bay button (Action/Action2/Action3): a rounded-rect with the equipped weapon's art
+ * filling it and a per-bay meter behind it that reflects the item's real [Interaction]:
+ *  - HOLD       → orange→red HEAT rising while held (full = overheated, bay locks until it cools)
+ *  - CHARGE     → holo CHARGE building while held (release fires scaled by how full)
+ *  - SINGLESHOT → a draining cooldown bar after a tap
+ * Press-and-hold drives the ~80ms hold loop; release fires (or stops, for HOLD).
+ */
 @Composable
 private fun WeaponButton(
-    label: String, itemId: String?, name: String, ready: Boolean, energyFrac: Float, accent: Color,
-    modifier: Modifier = Modifier, onHold: () -> Unit, onRelease: () -> Unit,
+    label: String, itemId: String?, name: String, ready: Boolean, fillFrac: Float, interaction: String,
+    active: Boolean, accent: Color, modifier: Modifier = Modifier, onHold: () -> Unit, onRelease: () -> Unit,
 ) {
     val colors = OverdriveTheme.colors
     val font = OverdriveTheme.font
@@ -538,9 +573,20 @@ private fun WeaponButton(
     var held by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(14.dp)
     val a = if (ready) 1f else 0.4f
+    val onColor = colors.success                       // support active (shield/boost up)
+    // fill colour by interaction: heat (orange→red) / charge (holo) / cooldown (dim accent)
+    val fillBrush = when (interaction) {
+        "HOLD" -> Brush.verticalGradient(listOf(
+            (if (fillFrac > 0.85f) Color(0xFFFF4D4D) else Color(0xFFFFA23A)).copy(alpha = 0.55f),
+            Color(0x22FF7A00)))
+        "CHARGE" -> Brush.verticalGradient(listOf(Color(0x884FB0FF), Color(0x224FB0FF)))
+        else -> Brush.verticalGradient(listOf(accent.copy(alpha = 0.35f), accent.copy(alpha = 0.12f)))
+    }
+    val tag = when (interaction) { "HOLD" -> "HOLD"; "CHARGE" -> "CHARGE"; else -> "TAP" }
     Box(
-        modifier.clip(shape).background(Color(0x14FFFFFF))
-            .border(if (held) 3.dp else 2.5.dp, if (held) colors.blue else accent.copy(alpha = 0.6f), shape)
+        modifier.clip(shape).background(if (active) onColor.copy(alpha = 0.12f) else Color(0x14FFFFFF))
+            .border(if (active || held) 3.dp else 2.5.dp,
+                if (active) onColor else if (held) colors.blue else accent.copy(alpha = 0.6f), shape)
             .pointerInput(ready, itemId) {
                 if (!ready || itemId == null) return@pointerInput
                 detectTapGestures(onPress = {
@@ -551,30 +597,73 @@ private fun WeaponButton(
                 })
             },
     ) {
-        // energy fill rising from the bottom, behind the weapon art
-        Box(
-            Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(energyFrac.coerceIn(0f, 1f))
-                .background(Brush.verticalGradient(listOf(Color(0x554FB0FF), Color(0x224FB0FF)))),
-        )
+        // per-bay meter rising from the bottom, behind the weapon art
+        Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(fillFrac.coerceIn(0f, 1f)).background(fillBrush))
         if (icon != null) Image(icon, name, Modifier.fillMaxSize().padding(12.dp), contentScale = ContentScale.Fit, alpha = a)
         Text(label, fontFamily = font, color = accent, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp,
             modifier = Modifier.align(Alignment.BottomStart).padding(8.dp))
-        Text(name.take(14), fontFamily = font, color = colors.textPrimary.copy(alpha = 0.85f), fontSize = 9.sp,
-            maxLines = 1, modifier = Modifier.align(Alignment.TopStart).padding(8.dp))
+        Row(Modifier.align(Alignment.TopStart).padding(8.dp)) {
+            Text(name.take(12), fontFamily = font, color = colors.textPrimary.copy(alpha = 0.85f), fontSize = 9.sp, maxLines = 1)
+        }
+        Text(if (active) "● ON" else if (ready) tag else "···",
+            fontFamily = font, color = if (active) onColor else accent.copy(alpha = 0.8f), fontSize = 8.sp,
+            fontWeight = FontWeight.Bold, letterSpacing = 1.sp, modifier = Modifier.align(Alignment.TopEnd).padding(8.dp))
     }
 }
 
+/**
+ * Victory flourish (the 2.6 end screen): "YOU WIN!" / "DEFEATED" over the gold laurel wreath with your
+ * finishing place, plus the defeated opponent commander. Animates in, then Continue → the full results.
+ */
 @Composable
-fun GameOverScreen(nav: OverdriveNav) {
+fun VictoryScreen(nav: OverdriveNav) {
     val engine = remember { RaceEngineHolder.engine }
     remember { engine.stop(); 0 }   // ensure cars are stopped
-    WireframeScreen(
-        title = "Game Over",
-        onBack = { nav.back() },
-        heroImage = null,
-        subtitle = "Finish flourish before results.",
-        actions = listOf(NavAction("See Results", { nav.go(Routes.RaceResults()) }, ButtonAccent.Gold)),
+    val colors = OverdriveTheme.colors
+    val font = OverdriveTheme.font
+    val won = engine.playerWon
+    val place = engine.state.standings.indexOfFirst { it.isPlayer }.let { if (it >= 0) it + 1 else 1 }
+    val opponentName = engine.opponentName
+    val oppPortrait = rememberAsset(
+        opponentName?.let { nm -> ContentRepository.commanders26ById.values.firstOrNull { it.name.equals(nm, true) }?.portraitAsset },
     )
+    val wreath = rememberAsset("ui/ui_results_wreath_gold.png")
+    val p = remember { Animatable(0f) }
+    LaunchedEffect(Unit) { p.animateTo(1f, tween(560)) }
+
+    OverdriveBackground {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Column(
+                Modifier.graphicsLayer { alpha = p.value; val s = 0.9f + 0.1f * p.value; scaleX = s; scaleY = s },
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    if (won) "YOU WIN!" else "DEFEATED",
+                    fontFamily = font, color = if (won) colors.gold else colors.danger,
+                    fontSize = 46.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp,
+                )
+                Spacer(Modifier.height(8.dp))
+                Box(Modifier.size(240.dp), contentAlignment = Alignment.Center) {
+                    if (won && wreath != null) Image(wreath, null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+                    Text(
+                        ordinal(place).uppercase(), fontFamily = font,
+                        color = if (won) Color(0xFF3A2A00) else colors.textPrimary,
+                        fontSize = 40.sp, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(bottom = 34.dp),   // sit inside the medallion, above the ribbon
+                    )
+                }
+                if (opponentName != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        if (oppPortrait != null) Image(oppPortrait, opponentName, Modifier.size(44.dp).clip(RoundedCornerShape(percent = 50)), contentScale = ContentScale.Crop)
+                        Text("${if (won) "DEFEATED" else "BEATEN BY"}  ·  ${opponentName.uppercase()}",
+                            fontFamily = font, color = colors.textDim, fontSize = 13.sp, letterSpacing = 1.sp)
+                    }
+                }
+                Spacer(Modifier.height(28.dp))
+                PrimaryButton("Continue", { nav.go(Routes.RaceResults()) }, Modifier.widthIn(min = 220.dp), ButtonAccent.Gold)
+            }
+        }
+    }
 }
 
 @Composable
@@ -584,10 +673,12 @@ fun RaceResultsScreen(nav: OverdriveNav, campaignMissionId: String) {
     val font = OverdriveTheme.font
     val engine = remember { RaceEngineHolder.engine }
     val standings = engine.state.standings
-    val isCampaign = campaignMissionId.isNotBlank()
+    // The mission id survives MatchSetup on the engine (the finish→Victory→Results hops drop the route arg).
+    val missionId = campaignMissionId.ifBlank { engine.campaignMissionId }
+    val isCampaign = missionId.isNotBlank()
     // Evaluate + award campaign stars exactly once for this result.
-    val summary = remember(campaignMissionId) {
-        if (isCampaign) CampaignEngine.completeMission(ctx, campaignMissionId, engine.state) else null
+    val summary = remember(missionId) {
+        if (isCampaign) CampaignEngine.completeMission(ctx, missionId, engine.state) else null
     }
 
     OverdriveScaffold(

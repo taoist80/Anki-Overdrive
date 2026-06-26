@@ -26,7 +26,8 @@ import dev.overdrive.ui.screens.CountdownScreen
 import dev.overdrive.ui.screens.DevSettingsScreen
 import dev.overdrive.ui.screens.GameModeDetailScreen
 import dev.overdrive.ui.screens.GameModeSelectScreen
-import dev.overdrive.ui.screens.GameOverScreen
+import dev.overdrive.ui.screens.VictoryScreen
+import dev.overdrive.ui.screens.SplashScreen
 import dev.overdrive.ui.screens.GarageDailySpecialsScreen
 import dev.overdrive.ui.screens.GarageHomeScreen
 import dev.overdrive.ui.screens.GarageItemsScreen
@@ -66,8 +67,9 @@ import dev.overdrive.ui.screens.WeaponPickerScreen
  */
 @Composable
 fun OverdriveNavHost(nav: OverdriveNav) {
-    NavHost(navController = nav.controller, startDestination = Routes.Home) {
+    NavHost(navController = nav.controller, startDestination = Routes.Splash) {
 
+        composable<Routes.Splash> { SplashScreen(nav) }
         composable<Routes.Home> { HomeScreen(nav) }
 
         // ---- Garage ----
@@ -103,7 +105,7 @@ fun OverdriveNavHost(nav: OverdriveNav) {
             composable<Routes.TrackScan> { TrackScanScreen(nav) }
             composable<Routes.Countdown> { CountdownScreen(nav) }
             composable<Routes.InRaceHud> { InRaceHudScreen(nav) }
-            composable<Routes.GameOver> { GameOverScreen(nav) }
+            composable<Routes.GameOver> { VictoryScreen(nav) }
             composable<Routes.RaceResults> { RaceResultsScreen(nav, it.toRoute<Routes.RaceResults>().campaignMissionId) }
         }
 

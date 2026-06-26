@@ -8,8 +8,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -17,20 +20,25 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.overdrive.data.ContentRepository
 import dev.overdrive.data.model.Chapter
+import dev.overdrive.data.model.Mission
 import dev.overdrive.game.campaign.CampaignEngine
 import dev.overdrive.nav.Overlay
 import dev.overdrive.nav.OverdriveNav
@@ -43,23 +51,19 @@ import dev.overdrive.ui.components.PrimaryButton
 import dev.overdrive.ui.components.StarRow
 import dev.overdrive.ui.theme.OverdriveTheme
 import dev.overdrive.ui.theme.rememberAsset
-import androidx.compose.ui.graphics.ImageBitmap
 
-/**
- * The opponent's portrait, carved from the 3.4.0 commander AssetBundles (ui/commanders/<name>.png via
- * extract_unity_art.py). Our Gen2 campaign ids carry no portrait, so we match by the commander's
- * friendly name first, then the mission cutscene name — trying each and using whichever bundle exists.
- * Most Gen2 opponents have no 3.4.0 portrait → returns null (the UI renders without one, gracefully).
- */
+/** Parse a chapter/commander tint hex (#RRGGBB) into a Compose Color, falling back to gold. */
 @Composable
-private fun rememberCommanderPortrait(friendlyName: String?, cutscene: String?): ImageBitmap? {
-    fun key(s: String?) = s?.substringAfterLast('_')?.takeIf { it.isNotBlank() }?.lowercase()
-        ?.let { "ui/commanders/$it.png" }
-    val byName = rememberAsset(key(friendlyName))
-    val byCutscene = rememberAsset(key(cutscene))
-    return byName ?: byCutscene
+private fun tintOf(hex: String): Color {
+    val gold = OverdriveTheme.colors.gold
+    return remember(hex) { runCatching { Color(android.graphics.Color.parseColor(hex)) }.getOrDefault(gold) }
 }
 
+/**
+ * CHAPTER SELECT — the 2.6 Tournament chapter grid. 3×2 of the authentic 2.6 crew banners
+ * (`ui/campaign/chapterNN.png`), each tinted to its chapter colour, with star progress and a lock.
+ * (Menu entry stays "Campaign"; screen chrome uses 2.6's real labels.)
+ */
 @Composable
 fun ChapterSelectScreen(nav: OverdriveNav) {
     val ctx = LocalContext.current
@@ -70,16 +74,24 @@ fun ChapterSelectScreen(nav: OverdriveNav) {
     val chapters = ContentRepository.chapters
 
     OverdriveScaffold(
-        title = "Campaign",
+        title = "CHAPTER SELECT",
         onBack = { nav.back() },
-        right = { Text("${profile.totalStars}/${CampaignEngine.maxStars()} ★", fontFamily = font, color = colors.gold, fontSize = 14.sp) },
+        right = { Text("TOURNAMENT  ★ ${profile.totalStars}/${CampaignEngine.maxStars()}", fontFamily = font, color = colors.gold, fontSize = 13.sp) },
     ) { mod ->
         Column(mod.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            chapters.forEach { ch ->
-                val unlocked = CampaignEngine.isChapterUnlocked(ch)
-                ChapterRow(ch, unlocked, CampaignEngine.chapterStars(ch), CampaignEngine.chapterMaxStars(ch)) {
-                    if (unlocked) nav.go(Routes.MissionSelect(ch.id.toIntOrNull() ?: 0))
-                    else nav.showOverlay(Overlay.Alert("Locked", "Earn more stars in earlier chapters to unlock this one."))
+            chapters.chunked(3).forEach { rowChapters ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    rowChapters.forEach { ch ->
+                        val unlocked = CampaignEngine.isChapterUnlocked(ch)
+                        ChapterCard(
+                            ch, unlocked, CampaignEngine.chapterStars(ch), CampaignEngine.chapterMaxStars(ch),
+                            Modifier.weight(1f),
+                        ) {
+                            if (unlocked) nav.go(Routes.MissionSelect(ch.id.toIntOrNull() ?: 0))
+                            else nav.showOverlay(Overlay.Alert("Locked", "Earn more stars in earlier chapters to unlock this one."))
+                        }
+                    }
+                    repeat(3 - rowChapters.size) { Spacer(Modifier.weight(1f)) }
                 }
             }
             Spacer(Modifier.height(12.dp))
@@ -88,25 +100,47 @@ fun ChapterSelectScreen(nav: OverdriveNav) {
 }
 
 @Composable
-private fun ChapterRow(ch: Chapter, unlocked: Boolean, stars: Int, maxStars: Int, onClick: () -> Unit) {
+private fun ChapterCard(ch: Chapter, unlocked: Boolean, stars: Int, maxStars: Int, modifier: Modifier, onClick: () -> Unit) {
     val font = OverdriveTheme.font
     val colors = OverdriveTheme.colors
-    val tint = remember(ch.tint) { runCatching { Color(android.graphics.Color.parseColor(ch.tint)) }.getOrDefault(colors.gold) }
-    OverdrivePanel(Modifier.fillMaxWidth().alpha(if (unlocked) 1f else 0.5f).clickable(onClick = onClick)) { inner ->
-        Row(inner.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(width = 6.dp, height = 44.dp).clip(RoundedCornerShape(3.dp)).background(tint))
-                Spacer(Modifier.width(14.dp))
-                Column {
-                    Text("CHAPTER ${ch.id}", fontFamily = font, color = colors.textPrimary, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                    Text(if (unlocked) "$stars / $maxStars stars" else "🔒 Locked", fontFamily = font, color = colors.textDim, fontSize = 12.sp)
-                }
+    val tint = tintOf(ch.tint)
+    val n = ch.id.toIntOrNull() ?: 0
+    val banner = rememberAsset("ui/campaign/chapter%02d.png".format(n))
+    val shape = RoundedCornerShape(14.dp)
+    Column(
+        modifier
+            .clip(shape)
+            .background(colors.panel.copy(alpha = 0.65f))
+            .background(tint.copy(alpha = 0.06f))
+            .clickable(onClick = onClick)
+            .alpha(if (unlocked) 1f else 0.6f),
+    ) {
+        // crew banner
+        Box(Modifier.fillMaxWidth().aspectRatio(1.45f).background(tint.copy(alpha = 0.10f)), contentAlignment = Alignment.Center) {
+            if (banner != null) Image(banner, "Chapter $n crew", Modifier.fillMaxSize().padding(6.dp), contentScale = ContentScale.Fit, alpha = if (unlocked) 1f else 0.5f)
+            if (!unlocked) Text("🔒", fontSize = 30.sp)
+        }
+        // footer
+        Column(Modifier.fillMaxWidth().padding(horizontal = 11.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("CHAPTER %02d".format(n), fontFamily = font, color = tint, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text(if (unlocked) "★ $stars/$maxStars" else "LOCKED", fontFamily = font, color = if (unlocked) colors.gold else colors.textDim, fontSize = 11.sp)
             }
-            Text("${ch.missions.size} ▸", fontFamily = font, color = colors.textDim, fontSize = 14.sp)
+            // progress bar
+            Box(Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(99.dp)).background(Color(0x22FFFFFF))) {
+                val frac = if (maxStars > 0) stars.toFloat() / maxStars else 0f
+                Box(Modifier.fillMaxWidth(frac.coerceIn(0f, 1f)).height(5.dp).clip(RoundedCornerShape(99.dp)).background(tint))
+            }
+            Text("${ch.missions.size} MISSIONS", fontFamily = font, color = colors.textDim, fontSize = 10.sp)
         }
     }
 }
 
+/**
+ * MISSION SELECT — the 2.6 Tournament road-spline rail. Missions are grouped by their real
+ * `mission_select_scroll_pos` into rows down a winding road (the chapter tint); missions sharing a
+ * scroll position render side-by-side as a branch. Each node is the authentic 2.6 opponent portrait.
+ */
 @Composable
 fun MissionSelectScreen(nav: OverdriveNav, chapterId: Int) {
     val ctx = LocalContext.current
@@ -115,43 +149,108 @@ fun MissionSelectScreen(nav: OverdriveNav, chapterId: Int) {
     val colors = OverdriveTheme.colors
     val font = OverdriveTheme.font
     val chapter = ContentRepository.chapters.firstOrNull { it.id == chapterId.toString() }
-    val missionIds = chapter?.missions.orEmpty()
+    val tint = tintOf(chapter?.tint ?: "#FFFFFF")
+    val missions = chapter?.missions.orEmpty().mapNotNull { ContentRepository.missionsById[it] }
+    // group into rows by scroll position (missions at the same position = a branch), ordered
+    val rows: List<List<Mission>> = missions.groupBy { (it.scrollPos * 1000).toInt() }
+        .toSortedMap().values.toList()
 
-    OverdriveScaffold(title = "Chapter $chapterId", onBack = { nav.back() }) { mod ->
-        Column(mod.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            if (missionIds.isEmpty()) Text("No missions", color = colors.textDim, fontFamily = font)
-            missionIds.forEachIndexed { i, mid ->
-                val mission = ContentRepository.missionsById[mid]
-                val cmdr = mission?.let { ContentRepository.commander(it.opponent) }
-                val unlocked = CampaignEngine.isMissionUnlocked(mid)
-                val stars = CampaignEngine.starsFor(mid)
-                OverdrivePanel(
-                    Modifier.fillMaxWidth().alpha(if (unlocked) 1f else 0.45f)
-                        .clickable { if (unlocked) nav.go(Routes.MissionDetail(mid)) },
-                ) { inner ->
-                    Row(inner.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            val portrait = rememberCommanderPortrait(cmdr?.friendlyName, mission?.cutscene)
-                            if (unlocked && portrait != null) {
-                                Image(portrait, null, Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)), contentScale = ContentScale.Crop)
-                            }
-                            Column {
-                                Text("MISSION ${i + 1}", fontFamily = font, color = colors.textPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                                Text(
-                                    if (unlocked) "vs ${cmdr?.friendlyName ?: mission?.opponent}  ·  ${mission?.gameType}" else "🔒 Locked",
-                                    fontFamily = font, color = colors.textDim, fontSize = 12.sp,
-                                )
-                            }
+    OverdriveScaffold(
+        title = "TOURNAMENT",
+        onBack = { nav.back() },
+        right = {
+            val cs = chapter?.let { CampaignEngine.chapterStars(it) } ?: 0
+            val cm = chapter?.let { CampaignEngine.chapterMaxStars(it) } ?: 0
+            Text("★ $cs/$cm", fontFamily = font, color = colors.gold, fontSize = 14.sp)
+        },
+    ) { mod ->
+        Column(mod.verticalScroll(rememberScrollState())) {
+            Text("CHAPTER %02d".format(chapterId), fontFamily = font, color = tint, fontSize = 16.sp, fontWeight = FontWeight.Bold,
+                letterSpacing = 1.sp, modifier = Modifier.padding(bottom = 8.dp))
+            if (rows.isEmpty()) Text("No missions", color = colors.textDim, fontFamily = font)
+            // the road: a tinted vertical bar with a dashed centerline, drawn behind the node rows
+            Box(
+                Modifier.fillMaxWidth().drawBehind {
+                    val cx = size.width / 2f
+                    val w = 46.dp.toPx()
+                    drawRoundRect(
+                        color = tint.copy(alpha = 0.14f),
+                        topLeft = Offset(cx - w / 2, 0f),
+                        size = androidx.compose.ui.geometry.Size(w, size.height),
+                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(w / 2, w / 2),
+                    )
+                    // tint edges
+                    listOf(cx - w / 2, cx + w / 2).forEach { x ->
+                        drawLine(tint.copy(alpha = 0.7f), Offset(x, 0f), Offset(x, size.height), strokeWidth = 3.dp.toPx())
+                    }
+                    // dashed white centerline
+                    drawLine(
+                        Color(0x88FFFFFF), Offset(cx, 0f), Offset(cx, size.height), strokeWidth = 3.dp.toPx(),
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(16.dp.toPx(), 14.dp.toPx())),
+                    )
+                },
+            ) {
+                Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
+                    rows.forEachIndexed { i, row ->
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = if (row.size > 1) Arrangement.SpaceEvenly else Arrangement.Center,
+                        ) {
+                            row.forEach { m -> MissionNode(m, isBoss = i == rows.lastIndex && row.size == 1) { mid ->
+                                if (CampaignEngine.isMissionUnlocked(mid)) nav.go(Routes.MissionDetail(mid))
+                            } }
                         }
-                        StarRow(earned = stars)
                     }
                 }
             }
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(16.dp))
         }
     }
 }
 
+@Composable
+private fun MissionNode(mission: Mission, isBoss: Boolean, onClick: (String) -> Unit) {
+    val colors = OverdriveTheme.colors
+    val font = OverdriveTheme.font
+    val unlocked = CampaignEngine.isMissionUnlocked(mission.id)
+    val stars = CampaignEngine.starsFor(mission.id)
+    val c26 = ContentRepository.commander26(mission.opponent)
+    val portrait = rememberAsset(c26?.portraitAsset)
+    val ring = when {
+        !unlocked -> colors.textDim.copy(alpha = 0.4f)
+        stars > 0 -> colors.success
+        else -> colors.blue
+    }
+    val sz = if (isBoss) 92.dp else 74.dp
+    Column(
+        Modifier.clickable(enabled = unlocked) { onClick(mission.id) },
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(
+            Modifier.size(sz).clip(RoundedCornerShape(percent = 50))
+                .background(Color(0xFF0D0719))
+                .drawBehind { drawCircle(ring, style = Stroke(width = 3.dp.toPx())) }
+                .alpha(if (unlocked) 1f else 0.5f),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (unlocked && portrait != null) Image(portrait, c26?.name, Modifier.fillMaxSize().clip(RoundedCornerShape(percent = 50)), contentScale = ContentScale.Crop)
+            else Text(if (unlocked) "?" else "🔒", color = colors.textDim, fontSize = 22.sp)
+        }
+        Spacer(Modifier.height(5.dp))
+        Text(if (unlocked) (c26?.name ?: mission.opponent) else "LOCKED", fontFamily = font,
+            color = colors.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        if (unlocked) {
+            val mode = mission.gameType.uppercase()
+            Text(mode, fontFamily = font, color = if ("BATTLE" in mode) Color(0xFFFF9BB0) else colors.blue, fontSize = 9.sp, letterSpacing = 1.sp)
+            StarRow(earned = stars)
+        }
+    }
+}
+
+/**
+ * MISSION DETAIL — opponent portrait + the real 2.6 "ABOUT OPPONENT" bio + "FAVORITE SUPERCAR",
+ * mode/track, star objectives, and the briefing / start actions.
+ */
 @Composable
 fun MissionDetailScreen(nav: OverdriveNav, missionId: String) {
     val ctx = LocalContext.current
@@ -160,44 +259,45 @@ fun MissionDetailScreen(nav: OverdriveNav, missionId: String) {
     val colors = OverdriveTheme.colors
     val font = OverdriveTheme.font
     val mission = ContentRepository.missionsById[missionId]
-    val cmdr = mission?.let { ContentRepository.commander(it.opponent) }
+    val c26 = ContentRepository.commander26(mission?.opponent)
+    val legacy = mission?.let { ContentRepository.commander(it.opponent) }   // for FAVORITE SUPERCAR
+    val name = c26?.name ?: legacy?.friendlyName ?: mission?.opponent ?: "?"
+    val portrait = rememberAsset(c26?.portraitAsset)
     val objectives = CampaignEngine.objectivesFor(missionId)
+    val favCar = legacy?.preferenceVehicle?.takeIf { it.isNotBlank() }
 
-    OverdriveScaffold(title = cmdr?.friendlyName ?: "Mission", onBack = { nav.back() }) { mod ->
+    OverdriveScaffold(title = name.uppercase(), onBack = { nav.back() }) { mod ->
         Column(mod.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             OverdrivePanel(Modifier.fillMaxWidth()) { inner ->
-                Row(inner.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    val portrait = rememberCommanderPortrait(cmdr?.friendlyName, mission?.cutscene)
-                    if (portrait != null) {
-                        Image(
-                            portrait, "Opponent",
-                            Modifier.size(96.dp).clip(RoundedCornerShape(12.dp)),
-                            contentScale = ContentScale.Crop,
-                        )
+                Row(inner.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Box(Modifier.size(110.dp).clip(RoundedCornerShape(12.dp)).background(colors.blue.copy(alpha = 0.10f)), contentAlignment = Alignment.Center) {
+                        if (portrait != null) Image(portrait, "Opponent", Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                     }
                     Column(Modifier.weight(1f)) {
-                        Text("OPPONENT", fontFamily = font, color = colors.gold, fontSize = 11.sp, letterSpacing = 2.sp)
-                        Text(cmdr?.friendlyName ?: mission?.opponent ?: "?", fontFamily = font, color = colors.textPrimary, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                        Text(
-                            "Mode: ${mission?.gameType ?: "?"}   ·   Track: ${mission?.preferenceTrack ?: "?"}" +
-                                (cmdr?.preferenceVehicle?.takeIf { it.isNotBlank() }?.let { "   ·   Prefers: $it" } ?: ""),
-                            fontFamily = font, color = colors.textDim, fontSize = 12.sp,
-                        )
+                        Text("ABOUT OPPONENT", fontFamily = font, color = colors.gold, fontSize = 11.sp, letterSpacing = 2.sp)
+                        Text(name, fontFamily = font, color = colors.textPrimary, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                        if (!c26?.bio.isNullOrBlank()) {
+                            Spacer(Modifier.height(4.dp))
+                            Text(c26!!.bio, fontFamily = font, color = colors.textDim, fontSize = 12.sp)
+                        }
                     }
                 }
             }
 
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                InfoCol("MODE", mission?.gameType?.uppercase() ?: "?")
+                InfoCol("TRACK", mission?.preferenceTrack?.substringAfterLast('_')?.let { "TRACK $it" } ?: "?")
+                if (favCar != null) InfoCol("FAVORITE SUPERCAR", favCar.uppercase())
+            }
+
             Text("STAR OBJECTIVES", fontFamily = font, color = colors.gold, fontSize = 12.sp, letterSpacing = 2.sp)
-            objectives.forEachIndexed { i, o ->
+            objectives.forEachIndexed { _, o ->
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text(if (o.earned) "★" else "☆", color = if (o.earned) colors.gold else colors.barEmpty, fontSize = 22.sp)
                     Spacer(Modifier.width(12.dp))
                     Column {
                         Text(o.description, fontFamily = font, color = colors.textPrimary, fontSize = 15.sp)
-                        Text(
-                            (if (o.evaluable) "+${o.rewardPoints} coins" else "+${o.rewardPoints} coins · needs items/vehicle tracking (Phase 4)"),
-                            fontFamily = font, color = colors.textDim, fontSize = 11.sp,
-                        )
+                        Text("+${o.rewardPoints} coins", fontFamily = font, color = colors.textDim, fontSize = 11.sp)
                     }
                 }
             }
@@ -205,7 +305,7 @@ fun MissionDetailScreen(nav: OverdriveNav, missionId: String) {
             Spacer(Modifier.height(4.dp))
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 PrimaryButton(
-                    "Briefing", { nav.showOverlay(Overlay.MissionStory("Defeat ${cmdr?.friendlyName ?: "the rival"} on ${mission?.preferenceTrack ?: "the track"}.")) },
+                    "About", { nav.showOverlay(Overlay.MissionStory(c26?.bio?.ifBlank { null } ?: "Defeat $name on ${mission?.preferenceTrack ?: "the track"}.")) },
                     Modifier.fillMaxWidth(), ButtonAccent.Outline,
                 )
                 PrimaryButton(
@@ -215,5 +315,15 @@ fun MissionDetailScreen(nav: OverdriveNav, missionId: String) {
             }
             Spacer(Modifier.height(12.dp))
         }
+    }
+}
+
+@Composable
+private fun InfoCol(label: String, value: String) {
+    val colors = OverdriveTheme.colors
+    val font = OverdriveTheme.font
+    Column {
+        Text(label, fontFamily = font, color = colors.textDim, fontSize = 10.sp, letterSpacing = 1.5.sp)
+        Text(value, fontFamily = font, color = colors.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
     }
 }

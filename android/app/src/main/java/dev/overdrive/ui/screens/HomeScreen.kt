@@ -1,5 +1,6 @@
 package dev.overdrive.ui.screens
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,6 +21,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -30,6 +32,7 @@ import dev.overdrive.profile.ProfileRepository
 import dev.overdrive.ui.components.CoinPill
 import dev.overdrive.ui.components.OverdriveBackground
 import dev.overdrive.ui.theme.OverdriveTheme
+import dev.overdrive.ui.theme.rememberAsset
 
 /**
  * 4.0.4 main menu: rose ANKI/OVERDRIVE wordmark over the violet nebula, with the four entries as
@@ -64,8 +67,15 @@ fun HomeScreen(nav: OverdriveNav) {
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
             ) {
-                Text("ANKI", fontFamily = font, color = colors.rose, fontSize = 18.sp, fontWeight = FontWeight.Bold, letterSpacing = 9.sp)
-                Text("OVERDRIVE", fontFamily = font, color = colors.rose, fontSize = 56.sp, fontWeight = FontWeight.Bold, letterSpacing = 4.sp)
+                // Authentic 4.0.4 OVERDRIVE title art (already pink/violet — on-palette); text fallback if missing.
+                val logo = rememberAsset("ui/overdrive_title.png")
+                if (logo != null) {
+                    Image(logo, "ANKI OVERDRIVE", Modifier.fillMaxWidth(0.46f), contentScale = ContentScale.Fit)
+                } else {
+                    Text("ANKI", fontFamily = font, color = colors.rose, fontSize = 18.sp, fontWeight = FontWeight.Bold, letterSpacing = 9.sp)
+                    Text("OVERDRIVE", fontFamily = font, color = colors.rose, fontSize = 56.sp, fontWeight = FontWeight.Bold, letterSpacing = 4.sp)
+                }
+                Spacer(Modifier.height(10.dp))
                 Text("X  ·  REBUILT", fontFamily = font, color = colors.gold, fontSize = 16.sp, letterSpacing = 6.sp)
                 Spacer(Modifier.height(48.dp))
 
