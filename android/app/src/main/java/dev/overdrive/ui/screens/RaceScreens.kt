@@ -10,9 +10,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -407,139 +409,106 @@ fun InRaceHudScreen(nav: OverdriveNav) {
     // Race over (a car reached the lap target) -> standings/loot.
     LaunchedEffect(st.finished) { if (st.finished) nav.go(Routes.RaceResults()) }
 
-    // In-race view: dark road-ish ground + the faint carved 4.0.4 controller_overlay frame.
+    // In-race view rebuilt 1:1 from 4.0.4's controller.scn: dark road ground + faint controller_overlay,
+    // then three columns — vertical throttle (left) · car logo + position (center) · weapon buttons (right) —
+    // with a full-width health bar across the top. Works for ALL modes: weapons + health show only in
+    // combat modes (playerHud != null); Race / Time Trial get throttle + center + a "no weapons" note.
+    val playerCar = player?.let { GameData.byModelId(it.modelId) }
+    val logo = rememberAsset(playerCar?.logoAsset)
     val overlay = rememberAsset("ui/controller_overlay.webp")
-    Box(
-        Modifier.fillMaxSize().background(
-            Brush.verticalGradient(listOf(Color(0xFF16213A), Color(0xFF0A0D13)))
-        )
-    ) {
-        if (overlay != null) {
-            Image(overlay, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alpha = 0.10f)
+    val hud = st.playerHud
+
+    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF16213A), Color(0xFF0A0D13))))) {
+        if (overlay != null) Image(overlay, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alpha = 0.10f)
+
+        // TOP: full-width Health bar (combat modes only) — the 4.0.4 Health TextureProgressBar.
+        if (hud != null) {
+            Box(Modifier.fillMaxWidth().height(10.dp).align(Alignment.TopCenter).background(colors.barEmpty)) {
+                Box(Modifier.fillMaxWidth((hud.health / 100f).coerceIn(0f, 1f)).fillMaxHeight()
+                    .background(Brush.horizontalGradient(listOf(colors.success, Color(0xFF9BE8B0)))))
+            }
         }
-        Column(Modifier.fillMaxSize().padding(18.dp)) {
-            // TOP: vitals (left) · lap/pos/time (center) · speed + END (right)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
-                Column(Modifier.width(230.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                    st.playerHud?.let { hud ->
-                        HudVital("ui/hud_damage.webp", "HP", hud.health / 100f, colors.success)
-                        HudVital("ui/hud_defense.webp", "ENERGY", hud.energy / 100f, colors.blue)
-                        if (hud.disabled) Text("DISABLED", color = colors.danger, fontFamily = font, fontWeight = FontWeight.Bold, fontSize = 13.sp, letterSpacing = 2.sp)
-                    }
+
+        Row(Modifier.fillMaxSize().padding(top = if (hud != null) 20.dp else 10.dp, bottom = 14.dp).padding(horizontal = 10.dp)) {
+            // LEFT ~38%: vertical throttle (drag to set speed)
+            Box(Modifier.weight(0.38f).fillMaxHeight(), contentAlignment = Alignment.Center) {
+                VerticalThrottle(throttle, Modifier.fillMaxHeight(0.9f).width(92.dp)) { throttle = it; engine.setThrottle(it) }
+            }
+            // CENTER ~24%: position · car logo · lap/speed · lanes · END
+            Column(Modifier.weight(0.24f).fillMaxHeight(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                Text(ordinal(rank), fontFamily = font, color = Color.White, fontSize = 56.sp, fontWeight = FontWeight.Bold)
+                if (logo != null) {
+                    Image(logo, player?.name, Modifier.fillMaxWidth(0.92f).heightIn(max = 46.dp).padding(vertical = 6.dp), contentScale = ContentScale.Fit)
+                } else if (player != null) {
+                    Text(carName(player.modelId, player.name).uppercase(), fontFamily = font, color = colors.blue, fontSize = 18.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                 }
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Row(verticalAlignment = Alignment.Bottom) {
-                        Text("LAP ", fontFamily = font, color = colors.textDim, fontSize = 14.sp, letterSpacing = 2.sp)
-                        Text("${player?.laps ?: 0}", fontFamily = font, color = colors.blue, fontSize = 32.sp, fontWeight = FontWeight.Bold)
-                        if (st.lapTarget > 0) Text(" / ${st.lapTarget}", fontFamily = font, color = colors.textPrimary, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                    }
-                    Text("POS ${ordinal(rank)}   ·   ${formatTime(st.elapsedMs)}", fontFamily = font, color = colors.textDim, fontSize = 12.sp, letterSpacing = 1.sp)
+                Text("LAP ${player?.laps ?: 0}${if (st.lapTarget > 0) " / ${st.lapTarget}" else ""}  ·  ${player?.speedMmPerSec ?: 0} mm/s${if (player?.onCurve == true) " ↘" else ""}",
+                    fontFamily = font, color = colors.textDim, fontSize = 12.sp, letterSpacing = 1.sp)
+                Spacer(Modifier.height(12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    ControlButton("◄", colors.blue, Modifier.size(52.dp)) { engine.nudgeLane(-1) }
+                    ControlButton("►", colors.blue, Modifier.size(52.dp)) { engine.nudgeLane(1) }
                 }
-                Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    HudReadout("ui/hud_topspeed.webp", "${player?.speedMmPerSec ?: 0}", if (player?.onCurve == true) "MM/S ↘" else "MM/S")
-                    Box(
-                        Modifier.clip(RoundedCornerShape(8.dp)).background(colors.danger.copy(alpha = 0.85f))
-                            .clickable { engine.stop(); nav.go(Routes.GameOver) }.padding(horizontal = 16.dp, vertical = 10.dp),
-                    ) { Text("END", color = Color.White, fontFamily = font, fontWeight = FontWeight.Bold, letterSpacing = 1.sp) }
+                Spacer(Modifier.height(12.dp))
+                Box(
+                    Modifier.clip(RoundedCornerShape(8.dp)).background(colors.danger.copy(alpha = 0.85f))
+                        .clickable { engine.stop(); nav.go(Routes.GameOver) }.padding(horizontal = 18.dp, vertical = 9.dp),
+                ) { Text("END", color = Color.White, fontFamily = font, fontWeight = FontWeight.Bold, letterSpacing = 1.sp) }
+                if (hud?.disabled == true) {
+                    Spacer(Modifier.height(8.dp))
+                    Text("DISABLED", color = colors.danger, fontFamily = font, fontWeight = FontWeight.Bold, fontSize = 16.sp, letterSpacing = 3.sp)
                 }
             }
-
-            // MIDDLE: compact live standings (telemetry from 0x27)
-            Box(
-                Modifier.fillMaxWidth().weight(1f).padding(vertical = 14.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(Brush.verticalGradient(listOf(colors.panel.copy(alpha = 0.5f), colors.surface.copy(alpha = 0.5f))))
-                    .border(1.dp, colors.panelBorder, RoundedCornerShape(12.dp)).padding(14.dp),
-            ) {
-                if (st.cars.isEmpty()) {
-                    Text("No cars armed — connect cars in Match Setup.", fontFamily = font, color = colors.textDim, fontSize = 13.sp, modifier = Modifier.align(Alignment.Center))
-                } else {
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("STANDINGS", fontFamily = font, color = colors.textDim, fontSize = 10.sp, letterSpacing = 2.sp)
-                        st.standings.forEachIndexed { i, c ->
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("${i + 1}.  ${if (c.isPlayer) "▸ " else ""}${carName(c.modelId, c.name)}", fontFamily = font, color = if (c.isPlayer) colors.gold else colors.textPrimary, fontSize = 14.sp)
-                                Text(
-                                    if (c.offTrack) "OFF TRACK"
-                                    else "lap ${c.laps}  ·  seg ${c.transitions}  ·  ${c.speedMmPerSec} mm/s${if (c.onCurve) " ↘" else ""}",
-                                    fontFamily = font, color = if (c.offTrack) colors.danger else colors.textDim, fontSize = 12.sp,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            // BOTTOM: lane · throttle · lane   +   circular weapon-fire buttons (canister art)
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                ControlButton("◄", colors.blue, Modifier.size(56.dp)) { engine.nudgeLane(-1) }
-                Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("THROTTLE", fontFamily = font, color = colors.textDim, fontSize = 10.sp, letterSpacing = 2.sp)
-                    Slider(
-                        value = throttle,
-                        onValueChange = { throttle = it; engine.setThrottle(it) },
-                        colors = SliderDefaults.colors(thumbColor = colors.gold, activeTrackColor = colors.gold, inactiveTrackColor = colors.barEmpty),
-                    )
-                }
-                ControlButton("►", colors.blue, Modifier.size(56.dp)) { engine.nudgeLane(1) }
-                Spacer(Modifier.width(6.dp))
-                val hud = st.playerHud
+            // RIGHT ~38%: weapon buttons (combat) — three stacked bays, art-filled, energy fill, hold-to-charge.
+            Column(Modifier.weight(0.38f).fillMaxHeight().padding(start = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (hud != null) {
-                    val atk = hud.bays.getOrNull(0); val sup = hud.bays.getOrNull(1)
-                    FireButton("ATTACK", atk?.itemId, atk?.itemName ?: "—", atk?.ready != false, colors.danger,
-                        onHold = { engine.holdAttack() }, onRelease = { engine.fireAttack() })
-                    FireButton("SUPPORT", sup?.itemId, sup?.itemName ?: "—", sup?.ready != false, colors.blue,
-                        onHold = { engine.holdSupport() }, onRelease = { engine.fireSupport() })
+                    hud.bays.forEach { bay ->
+                        val accent = when (bay.bay) { "attack" -> colors.danger; "support" -> colors.blue; else -> colors.gold }
+                        WeaponButton(
+                            bay.bay.uppercase(), bay.itemId, bay.itemName, bay.ready, hud.energy / 100f, accent,
+                            Modifier.fillMaxWidth().weight(1f),
+                            onHold = { engine.holdBay(bay.bay) }, onRelease = { engine.fireBay(bay.bay) },
+                        )
+                    }
                 } else {
-                    // RACE / TIME TRIAL are weapon-free — say so instead of leaving blank space.
                     Box(
-                        Modifier.width(140.dp).height(64.dp).clip(RoundedCornerShape(10.dp))
-                            .background(colors.panel.copy(alpha = 0.5f)),
+                        Modifier.fillMaxWidth().weight(1f).clip(RoundedCornerShape(12.dp)).background(colors.panel.copy(alpha = 0.5f)),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Text("NO WEAPONS\nplay BATTLE to fight", color = colors.textDim, fontFamily = font,
-                            fontSize = 10.sp, textAlign = TextAlign.Center, letterSpacing = 1.sp)
+                        Text("NO WEAPONS\nplay BATTLE to fight", color = colors.textDim, fontFamily = font, fontSize = 11.sp, textAlign = TextAlign.Center, letterSpacing = 1.sp)
                     }
                 }
             }
-            Spacer(Modifier.height(4.dp))
         }
     }
 }
 
-/** A HUD vital (HP / energy): the 4.0.4 telemetry icon + a thin holo bar that drains with the value. */
+/**
+ * The 4.0.4 vertical throttle (ThrottleContainer / Trottle.gd): a tall rounded bar; drag anywhere on it
+ * to set speed (top = full). Magenta fill, matching the original. Drives [onChange] live.
+ */
 @Composable
-private fun HudVital(iconPath: String, label: String, frac: Float, tint: Color) {
+private fun VerticalThrottle(value: Float, modifier: Modifier = Modifier, onChange: (Float) -> Unit) {
     val colors = OverdriveTheme.colors
     val font = OverdriveTheme.font
-    val icon = rememberAsset(iconPath)
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        if (icon != null) Image(icon, null, Modifier.size(20.dp), contentScale = ContentScale.Fit)
-        Column(Modifier.weight(1f)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(label, fontFamily = font, color = colors.textDim, fontSize = 9.sp, letterSpacing = 1.5.sp)
-                Text("${(frac.coerceIn(0f, 1f) * 100).toInt()}", fontFamily = font, color = tint, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-            }
-            Box(Modifier.fillMaxWidth().height(7.dp).clip(RoundedCornerShape(4.dp)).background(colors.barEmpty)) {
-                Box(Modifier.fillMaxWidth(frac.coerceIn(0f, 1f)).height(7.dp).clip(RoundedCornerShape(4.dp))
-                    .background(Brush.horizontalGradient(listOf(tint, tint.copy(alpha = 0.7f)))))
-            }
-        }
-    }
-}
-
-/** A HUD readout (e.g. SPEED): the 4.0.4 telemetry icon + a big value + small unit label. */
-@Composable
-private fun HudReadout(iconPath: String, value: String, unit: String) {
-    val colors = OverdriveTheme.colors
-    val font = OverdriveTheme.font
-    val icon = rememberAsset(iconPath)
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        if (icon != null) Image(icon, null, Modifier.size(22.dp), contentScale = ContentScale.Fit)
-        Column(horizontalAlignment = Alignment.End) {
-            Text(value, fontFamily = font, color = colors.blue, fontSize = 26.sp, fontWeight = FontWeight.Bold)
-            Text(unit, fontFamily = font, color = colors.textDim, fontSize = 9.sp, letterSpacing = 1.5.sp)
-        }
+    val shape = RoundedCornerShape(16.dp)
+    Box(
+        modifier.clip(shape).background(Color(0x1EFFFFFF)).border(1.dp, colors.panelBorder, shape)
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val ch = awaitPointerEvent().changes.firstOrNull() ?: continue
+                        if (ch.pressed) onChange((1f - ch.position.y / size.height).coerceIn(0f, 1f))
+                    }
+                }
+            },
+    ) {
+        Box(
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(value.coerceIn(0f, 1f)).clip(shape)
+                .background(Brush.verticalGradient(listOf(Color(0xFFFF8AE0), Color(0xFFEC4FD0)))),
+        )
+        Text("THROTTLE", fontFamily = font, color = Color(0xFF27122E), fontSize = 9.sp, fontWeight = FontWeight.Bold,
+            letterSpacing = 2.sp, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 10.dp))
     }
 }
 
@@ -552,43 +521,46 @@ private fun ControlButton(glyph: String, tint: Color, modifier: Modifier = Modif
 }
 
 /**
- * A circular weapon-fire trigger (the 4.0.4 controller bay button): a radial glow in the bay accent
- * (attack red / support blue), the equipped weapon's canister art centered, label below. Dims on cooldown.
+ * The 4.0.4 weapon bay button (Action/Action2/Action3): a rounded-rect with the equipped weapon's art
+ * filling it and an energy fill rising over it. Press-and-hold to fire continuously — the hold ticks the
+ * charge (~80ms) and drains energy live; release fires the charged shot. Glows holo while engaged, dims
+ * on cooldown.
  */
 @Composable
-private fun FireButton(
-    label: String, itemId: String?, name: String, ready: Boolean, accent: Color,
-    onHold: () -> Unit, onRelease: () -> Unit,
+private fun WeaponButton(
+    label: String, itemId: String?, name: String, ready: Boolean, energyFrac: Float, accent: Color,
+    modifier: Modifier = Modifier, onHold: () -> Unit, onRelease: () -> Unit,
 ) {
     val colors = OverdriveTheme.colors
     val font = OverdriveTheme.font
     val icon = rememberAsset(ItemRepository.imageAsset(itemId))
     val scope = rememberCoroutineScope()
     var held by remember { mutableStateOf(false) }
-    val a = if (ready) 1f else 0.35f
-    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp)) {
+    val shape = RoundedCornerShape(14.dp)
+    val a = if (ready) 1f else 0.4f
+    Box(
+        modifier.clip(shape).background(Color(0x14FFFFFF))
+            .border(if (held) 3.dp else 2.5.dp, if (held) colors.blue else accent.copy(alpha = 0.6f), shape)
+            .pointerInput(ready, itemId) {
+                if (!ready || itemId == null) return@pointerInput
+                detectTapGestures(onPress = {
+                    held = true
+                    val job = scope.launch { while (isActive) { onHold(); delay(80) } }
+                    tryAwaitRelease()
+                    job.cancel(); held = false; onRelease()
+                })
+            },
+    ) {
+        // energy fill rising from the bottom, behind the weapon art
         Box(
-            Modifier.size(66.dp).clip(CircleShape)
-                // brighter glow + thicker ring while held (charging)
-                .background(Brush.radialGradient(listOf(accent.copy(alpha = (if (held) 0.85f else 0.5f) * a), Color(0x00000000))))
-                .border(if (held) 3.dp else 2.dp, accent.copy(alpha = a), CircleShape)
-                // press-and-hold: tick the charge (~80ms) while down, fire the charged shot on release
-                .pointerInput(ready) {
-                    if (!ready) return@pointerInput
-                    detectTapGestures(onPress = {
-                        held = true
-                        val job = scope.launch { while (isActive) { onHold(); delay(80) } }
-                        tryAwaitRelease()
-                        job.cancel(); held = false; onRelease()
-                    })
-                },
-            contentAlignment = Alignment.Center,
-        ) {
-            if (icon != null) Image(icon, null, Modifier.size(40.dp), contentScale = ContentScale.Fit, alpha = a)
-            else Text(label.take(1), color = accent.copy(alpha = a), fontFamily = font, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-        }
-        Text(if (held) "HOLD…" else label, color = accent.copy(alpha = a), fontFamily = font, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-        Text(name.take(12), color = colors.textDim, fontFamily = font, fontSize = 8.sp, maxLines = 1, textAlign = TextAlign.Center)
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(energyFrac.coerceIn(0f, 1f))
+                .background(Brush.verticalGradient(listOf(Color(0x554FB0FF), Color(0x224FB0FF)))),
+        )
+        if (icon != null) Image(icon, name, Modifier.fillMaxSize().padding(12.dp), contentScale = ContentScale.Fit, alpha = a)
+        Text(label, fontFamily = font, color = accent, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp,
+            modifier = Modifier.align(Alignment.BottomStart).padding(8.dp))
+        Text(name.take(14), fontFamily = font, color = colors.textPrimary.copy(alpha = 0.85f), fontSize = 9.sp,
+            maxLines = 1, modifier = Modifier.align(Alignment.TopStart).padding(8.dp))
     }
 }
 

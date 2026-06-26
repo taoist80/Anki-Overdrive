@@ -320,7 +320,8 @@ class Combat {
             return BayHud(label, id, id?.let { ItemRepository.name(it) } ?: "—",
                 ready = cd <= 0, cooldownFrac = (cd / cdMax).toFloat().coerceIn(0f, 1f))
         }
-        return PlayerHud(c.health, c.energy, c.disabled,
-            listOf(bayHud(Bay.ATTACK, "attack"), bayHud(Bay.SUPPORT, "support")))
+        val bays = mutableListOf(bayHud(Bay.ATTACK, "attack"), bayHud(Bay.SUPPORT, "support"))
+        if (c.equipped[Bay.SPECIAL] != null) bays.add(bayHud(Bay.SPECIAL, "special"))  // 3rd slot when equipped
+        return PlayerHud(c.health, c.energy, c.disabled, bays)
     }
 }

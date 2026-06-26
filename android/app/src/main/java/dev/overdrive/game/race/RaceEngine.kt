@@ -237,15 +237,11 @@ class RaceEngine(private val mgr: CarManager) {
         publish()
     }
 
-    /** Fire the player's attack bay (HUD top trigger) — resolves a target + applies the weapon. */
-    /** Player holds the fire button: charge the bay (drains energy live). Returns 0..1 charge, -1 if unavailable. */
-    fun holdAttack(): Float = playerAddr?.let { combat.holdTick(it, Bay.ATTACK, HOLD_DT_S).also { publish() } } ?: -1f
-    fun holdSupport(): Float = playerAddr?.let { combat.holdTick(it, Bay.SUPPORT, HOLD_DT_S).also { publish() } } ?: -1f
-
-    /** Player releases the fire button: fire the bay scaled by the charge built up while holding. */
-    fun fireAttack() { playerAddr?.let { combat.release(it, Bay.ATTACK, tele.values); publish() } }
-    /** Fire the player's support bay (HUD bottom trigger) — shield/boost/etc. */
-    fun fireSupport() { playerAddr?.let { combat.release(it, Bay.SUPPORT, tele.values); publish() } }
+    /** Player holds a weapon button: charge that bay (drains energy live). [bay] = "attack"/"support"/"special". */
+    fun holdBay(bay: String): Float = playerAddr?.let { combat.holdTick(it, bayOf(bay), HOLD_DT_S).also { publish() } } ?: -1f
+    /** Player releases a weapon button: fire that bay scaled by the charge built up while holding. */
+    fun fireBay(bay: String) { playerAddr?.let { combat.release(it, bayOf(bay), tele.values); publish() } }
+    private fun bayOf(bay: String) = when (bay) { "attack" -> Bay.ATTACK; "support" -> Bay.SUPPORT; else -> Bay.SPECIAL }
 
     /** Curve-aware + combat-aware target: cap on curves, then scale by combat (boost/tractor/disabled). */
     private fun effectiveSpeed(addr: String, pieceId: Int): Int {
