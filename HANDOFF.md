@@ -178,7 +178,17 @@ Design spec artifact (4.0.4 layout, app palette, real data): published this sess
    • `generate_art.py commanders` → 6 painted-style busts → `ui/commanders/<name>.png` (512px, matched to the
      extracted set via a flat cel-shaded prompt + photoreal/3D/scene negatives; user signed off on a 2-image test).
      Wired automatically (CampaignScreens keys portraits by friendly-name). Uses ambient AWS SSO profile.
-   **REMAINING:** (a) in-race **HUD rebuild** (hardest; `controller_overlay.webp` already carved — see below).
+   **IN-RACE HUD REBUILD — DONE (build + install verified; live HUD needs a real race to eyeball).** Carved the
+   HUD assets via the `ui` mode (`controller_overlay` + `hud_{damage,defense,incoming,accel,topspeed,lock,placeontrack}`).
+   `InRaceHudScreen` (`RaceScreens.kt`) rebuilt to 4.0.4: dark road gradient + faint `controller_overlay` frame;
+   top row = HP/ENERGY vitals (with `hud_damage`/`hud_defense` icons + holo bars) · LAP x/y + POS/TIME (center) ·
+   SPEED readout (with `hud_topspeed` icon) + END; middle = compact live STANDINGS panel; bottom = lane ◄/► +
+   styled THROTTLE slider + **circular glowing weapon-fire buttons** (`FireButton`: radial glow, attack=red /
+   support=holo-blue, equipped canister art centered, dims on cooldown). All engine hooks preserved
+   (setThrottle/nudgeLane/fireAttack/fireSupport/stop, playerHud vitals+bays, standings, finish→results).
+   New helpers `HudVital`/`HudReadout`/`FireButton`; `ControlButton` kept (shared with MatchSetup); old
+   `HudStat`/`BayButton`/`VitalBar` removed. `controller_overlay` is a faint translucent frame (overlaid @ 0.10).
+   **REMAINING:** (a) ~~HUD rebuild~~ DONE — left to verify live + tune in an actual battle race.
    (b) Stub screens still text-only (Profile/avatars, Medals, Store, Tracks, CoinShop packs) — avatars/medals have
    **no art in 4.0.4 or 3.4.0 bundles** (ProfileMedals could reuse `Loot_*`); 3.4.0 `commanderdriver1/2`/`pa` could
    serve as player avatars. (c) per-brand racing-name colors (logos

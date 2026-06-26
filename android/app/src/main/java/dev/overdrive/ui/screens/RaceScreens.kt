@@ -37,6 +37,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -373,33 +374,58 @@ fun InRaceHudScreen(nav: OverdriveNav) {
     // Race over (a car reached the lap target) -> standings/loot.
     LaunchedEffect(st.finished) { if (st.finished) nav.go(Routes.RaceResults()) }
 
-    OverdriveBackground(heroImage = null) {
-        Column(Modifier.fillMaxSize().padding(20.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                HudStat("POS", ordinal(rank))
-                HudStat("LAP", if (st.lapTarget > 0) "${player?.laps ?: 0}/${st.lapTarget}" else "${player?.laps ?: 0}")
-                HudStat("SPEED", "${player?.speedMmPerSec ?: 0}${if (player?.onCurve == true) "↘" else ""}")
-                HudStat("TIME", formatTime(st.elapsedMs))
-                Box(
-                    Modifier.clip(RoundedCornerShape(6.dp)).background(colors.danger.copy(alpha = 0.85f))
-                        .clickable { engine.stop(); nav.go(Routes.GameOver) }.padding(horizontal = 16.dp, vertical = 10.dp),
-                ) { Text("END", color = Color.White, fontFamily = font, fontWeight = FontWeight.Bold) }
+    // In-race view: dark road-ish ground + the faint carved 4.0.4 controller_overlay frame.
+    val overlay = rememberAsset("ui/controller_overlay.webp")
+    Box(
+        Modifier.fillMaxSize().background(
+            Brush.verticalGradient(listOf(Color(0xFF16213A), Color(0xFF0A0D13)))
+        )
+    ) {
+        if (overlay != null) {
+            Image(overlay, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alpha = 0.10f)
+        }
+        Column(Modifier.fillMaxSize().padding(18.dp)) {
+            // TOP: vitals (left) · lap/pos/time (center) · speed + END (right)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
+                Column(Modifier.width(230.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    st.playerHud?.let { hud ->
+                        HudVital("ui/hud_damage.webp", "HP", hud.health / 100f, colors.success)
+                        HudVital("ui/hud_defense.webp", "ENERGY", hud.energy / 100f, colors.blue)
+                        if (hud.disabled) Text("DISABLED", color = colors.danger, fontFamily = font, fontWeight = FontWeight.Bold, fontSize = 13.sp, letterSpacing = 2.sp)
+                    }
+                }
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Row(verticalAlignment = Alignment.Bottom) {
+                        Text("LAP ", fontFamily = font, color = colors.textDim, fontSize = 14.sp, letterSpacing = 2.sp)
+                        Text("${player?.laps ?: 0}", fontFamily = font, color = colors.blue, fontSize = 32.sp, fontWeight = FontWeight.Bold)
+                        if (st.lapTarget > 0) Text(" / ${st.lapTarget}", fontFamily = font, color = colors.textPrimary, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Text("POS ${ordinal(rank)}   ·   ${formatTime(st.elapsedMs)}", fontFamily = font, color = colors.textDim, fontSize = 12.sp, letterSpacing = 1.sp)
+                }
+                Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    HudReadout("ui/hud_topspeed.webp", "${player?.speedMmPerSec ?: 0}", if (player?.onCurve == true) "MM/S ↘" else "MM/S")
+                    Box(
+                        Modifier.clip(RoundedCornerShape(8.dp)).background(colors.danger.copy(alpha = 0.85f))
+                            .clickable { engine.stop(); nav.go(Routes.GameOver) }.padding(horizontal = 16.dp, vertical = 10.dp),
+                    ) { Text("END", color = Color.White, fontFamily = font, fontWeight = FontWeight.Bold, letterSpacing = 1.sp) }
+                }
             }
 
-            // Live telemetry for all cars (from 0x27)
+            // MIDDLE: compact live standings (telemetry from 0x27)
             Box(
-                Modifier.fillMaxWidth().weight(1f).padding(vertical = 16.dp)
-                    .clip(RoundedCornerShape(10.dp)).border(1.dp, colors.panelBorder, RoundedCornerShape(10.dp))
-                    .background(colors.panel.copy(alpha = 0.4f)).padding(14.dp),
+                Modifier.fillMaxWidth().weight(1f).padding(vertical = 14.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Brush.verticalGradient(listOf(colors.panel.copy(alpha = 0.5f), colors.surface.copy(alpha = 0.5f))))
+                    .border(1.dp, colors.panelBorder, RoundedCornerShape(12.dp)).padding(14.dp),
             ) {
                 if (st.cars.isEmpty()) {
                     Text("No cars armed — connect cars in Match Setup.", fontFamily = font, color = colors.textDim, fontSize = 13.sp, modifier = Modifier.align(Alignment.Center))
                 } else {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("LIVE TELEMETRY (0x27)", fontFamily = font, color = colors.textDim, fontSize = 11.sp, letterSpacing = 2.sp)
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("STANDINGS", fontFamily = font, color = colors.textDim, fontSize = 10.sp, letterSpacing = 2.sp)
                         st.standings.forEachIndexed { i, c ->
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("${i + 1}. ${if (c.isPlayer) "▸ " else ""}${carName(c.modelId, c.name)}", fontFamily = font, color = if (c.isPlayer) colors.gold else colors.textPrimary, fontSize = 14.sp)
+                                Text("${i + 1}.  ${if (c.isPlayer) "▸ " else ""}${carName(c.modelId, c.name)}", fontFamily = font, color = if (c.isPlayer) colors.gold else colors.textPrimary, fontSize = 14.sp)
                                 Text(
                                     if (c.offTrack) "OFF TRACK"
                                     else "lap ${c.laps}  ·  seg ${c.transitions}  ·  ${c.speedMmPerSec} mm/s${if (c.onCurve) " ↘" else ""}",
@@ -411,36 +437,28 @@ fun InRaceHudScreen(nav: OverdriveNav) {
                 }
             }
 
-            // Vitals: player health + energy (live from the combat model)
-            st.playerHud?.let { hud ->
-                Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    VitalBar("ARMOR", hud.health / 100f, Color(0xFF3DDC84), Modifier.weight(1f))
-                    VitalBar("ENERGY", hud.energy / 100f, colors.blue, Modifier.weight(1f))
-                    if (hud.disabled) Text("DISABLED!", color = colors.danger, fontFamily = font, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                }
-            }
-
-            // Controls: steer · throttle · steer · attack bay · support bay
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                ControlButton("◄", colors.blue, Modifier.weight(1f)) { engine.nudgeLane(-1) }
-                Column(Modifier.weight(2f), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("THROTTLE", fontFamily = font, color = colors.textDim, fontSize = 11.sp, letterSpacing = 1.sp)
+            // BOTTOM: lane · throttle · lane   +   circular weapon-fire buttons (canister art)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                ControlButton("◄", colors.blue, Modifier.size(56.dp)) { engine.nudgeLane(-1) }
+                Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("THROTTLE", fontFamily = font, color = colors.textDim, fontSize = 10.sp, letterSpacing = 2.sp)
                     Slider(
                         value = throttle,
                         onValueChange = { throttle = it; engine.setThrottle(it) },
-                        colors = SliderDefaults.colors(thumbColor = colors.gold, activeTrackColor = colors.gold),
+                        colors = SliderDefaults.colors(thumbColor = colors.gold, activeTrackColor = colors.gold, inactiveTrackColor = colors.barEmpty),
                     )
                 }
-                ControlButton("►", colors.blue, Modifier.weight(1f)) { engine.nudgeLane(1) }
+                ControlButton("►", colors.blue, Modifier.size(56.dp)) { engine.nudgeLane(1) }
+                Spacer(Modifier.width(6.dp))
                 val hud = st.playerHud
                 if (hud != null) {
                     val atk = hud.bays.getOrNull(0); val sup = hud.bays.getOrNull(1)
-                    BayButton("ATTACK", atk?.itemId, atk?.itemName ?: "—", atk?.ready != false, colors.orange) { engine.fireAttack() }
-                    BayButton("SUPPORT", sup?.itemId, sup?.itemName ?: "—", sup?.ready != false, colors.gold) { engine.fireSupport() }
+                    FireButton("ATTACK", atk?.itemId, atk?.itemName ?: "—", atk?.ready != false, colors.danger) { engine.fireAttack() }
+                    FireButton("SUPPORT", sup?.itemId, sup?.itemName ?: "—", sup?.ready != false, colors.blue) { engine.fireSupport() }
                 } else {
                     // RACE / TIME TRIAL are weapon-free — say so instead of leaving blank space.
                     Box(
-                        Modifier.width(150.dp).height(56.dp).clip(RoundedCornerShape(8.dp))
+                        Modifier.width(140.dp).height(64.dp).clip(RoundedCornerShape(10.dp))
                             .background(colors.panel.copy(alpha = 0.5f)),
                         contentAlignment = Alignment.Center,
                     ) {
@@ -449,18 +467,44 @@ fun InRaceHudScreen(nav: OverdriveNav) {
                     }
                 }
             }
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(4.dp))
         }
     }
 }
 
+/** A HUD vital (HP / energy): the 4.0.4 telemetry icon + a thin holo bar that drains with the value. */
 @Composable
-private fun HudStat(label: String, value: String) {
+private fun HudVital(iconPath: String, label: String, frac: Float, tint: Color) {
     val colors = OverdriveTheme.colors
     val font = OverdriveTheme.font
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(label, fontFamily = font, color = colors.textDim, fontSize = 11.sp, letterSpacing = 1.sp)
-        Text(value, fontFamily = font, color = colors.textPrimary, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+    val icon = rememberAsset(iconPath)
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (icon != null) Image(icon, null, Modifier.size(20.dp), contentScale = ContentScale.Fit)
+        Column(Modifier.weight(1f)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(label, fontFamily = font, color = colors.textDim, fontSize = 9.sp, letterSpacing = 1.5.sp)
+                Text("${(frac.coerceIn(0f, 1f) * 100).toInt()}", fontFamily = font, color = tint, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+            }
+            Box(Modifier.fillMaxWidth().height(7.dp).clip(RoundedCornerShape(4.dp)).background(colors.barEmpty)) {
+                Box(Modifier.fillMaxWidth(frac.coerceIn(0f, 1f)).height(7.dp).clip(RoundedCornerShape(4.dp))
+                    .background(Brush.horizontalGradient(listOf(tint, tint.copy(alpha = 0.7f)))))
+            }
+        }
+    }
+}
+
+/** A HUD readout (e.g. SPEED): the 4.0.4 telemetry icon + a big value + small unit label. */
+@Composable
+private fun HudReadout(iconPath: String, value: String, unit: String) {
+    val colors = OverdriveTheme.colors
+    val font = OverdriveTheme.font
+    val icon = rememberAsset(iconPath)
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (icon != null) Image(icon, null, Modifier.size(22.dp), contentScale = ContentScale.Fit)
+        Column(horizontalAlignment = Alignment.End) {
+            Text(value, fontFamily = font, color = colors.blue, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+            Text(unit, fontFamily = font, color = colors.textDim, fontSize = 9.sp, letterSpacing = 1.5.sp)
+        }
     }
 }
 
@@ -472,36 +516,29 @@ private fun ControlButton(glyph: String, tint: Color, modifier: Modifier = Modif
     ) { Text(glyph, color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold) }
 }
 
-/** A weapon-bay trigger: the equipped weapon's icon + bay label (ATTACK/SUPPORT) + item name; dims on cooldown. */
+/**
+ * A circular weapon-fire trigger (the 4.0.4 controller bay button): a radial glow in the bay accent
+ * (attack red / support blue), the equipped weapon's canister art centered, label below. Dims on cooldown.
+ */
 @Composable
-private fun BayButton(label: String, itemId: String?, name: String, ready: Boolean, tint: Color, onClick: () -> Unit) {
-    val font = OverdriveTheme.font
-    val icon = rememberAsset(ItemRepository.imageAsset(itemId))
-    Box(
-        Modifier.width(96.dp).height(56.dp).clip(RoundedCornerShape(8.dp))
-            .background(if (ready) tint else tint.copy(alpha = 0.35f))
-            .clickable(enabled = ready, onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            if (icon != null) Image(icon, null, Modifier.height(22.dp), contentScale = ContentScale.Fit)
-            Text(label, color = Color.White, fontFamily = font, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-            Text(name.take(13), color = Color.White.copy(alpha = 0.9f), fontFamily = font, fontSize = 8.sp,
-                textAlign = TextAlign.Center, maxLines = 1, modifier = Modifier.padding(horizontal = 4.dp))
-        }
-    }
-}
-
-/** A thin labelled progress bar (armor/energy). */
-@Composable
-private fun VitalBar(label: String, frac: Float, tint: Color, modifier: Modifier = Modifier) {
+private fun FireButton(label: String, itemId: String?, name: String, ready: Boolean, accent: Color, onClick: () -> Unit) {
     val colors = OverdriveTheme.colors
     val font = OverdriveTheme.font
-    Column(modifier) {
-        Text(label, fontFamily = font, color = colors.textDim, fontSize = 9.sp, letterSpacing = 1.sp)
-        Box(Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)).background(colors.barEmpty)) {
-            Box(Modifier.fillMaxWidth(frac.coerceIn(0f, 1f)).height(8.dp).clip(RoundedCornerShape(4.dp)).background(tint))
+    val icon = rememberAsset(ItemRepository.imageAsset(itemId))
+    val a = if (ready) 1f else 0.35f
+    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Box(
+            Modifier.size(66.dp).clip(CircleShape)
+                .background(Brush.radialGradient(listOf(accent.copy(alpha = 0.5f * a), Color(0x00000000))))
+                .border(2.dp, accent.copy(alpha = a), CircleShape)
+                .clickable(enabled = ready, onClick = onClick),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (icon != null) Image(icon, null, Modifier.size(40.dp), contentScale = ContentScale.Fit, alpha = a)
+            else Text(label.take(1), color = accent.copy(alpha = a), fontFamily = font, fontSize = 22.sp, fontWeight = FontWeight.Bold)
         }
+        Text(label, color = accent.copy(alpha = a), fontFamily = font, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+        Text(name.take(12), color = colors.textDim, fontFamily = font, fontSize = 8.sp, maxLines = 1, textAlign = TextAlign.Center)
     }
 }
 
