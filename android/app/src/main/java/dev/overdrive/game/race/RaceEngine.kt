@@ -9,7 +9,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import dev.overdrive.AnkiCarManagerHolder
 import dev.overdrive.CarManager
+import dev.overdrive.GameData
 import dev.overdrive.Protocol
+import dev.overdrive.data.model.Bay
+import dev.overdrive.profile.ProfileRepository
 
 /** Live state for one car in a race, driven by 0x27 position telemetry. */
 data class CarTelemetry(
@@ -27,6 +30,9 @@ data class CarTelemetry(
     val transitions: Int = 0,
     val laps: Int = 0,
     val lastUpdateMs: Long = 0L,
+    val health: Float = Combat.MAX_HEALTH,
+    val energy: Float = Combat.MAX_ENERGY,
+    val disabled: Boolean = false,
 )
 
 data class RaceState(
@@ -34,6 +40,7 @@ data class RaceState(
     val running: Boolean = false,
     val elapsedMs: Long = 0L,
     val cars: List<CarTelemetry> = emptyList(),
+    val playerHud: Combat.PlayerHud? = null,
 ) {
     /** Standings: most laps, then most segment transitions (track-progress tiebreaker). */
     val standings: List<CarTelemetry>
@@ -78,6 +85,7 @@ class RaceEngine(private val mgr: CarManager) {
     private var startedAt = 0L
     private var playerAddr: String? = null
     private var designatedPlayer: String? = null
+    val combat = Combat()
 
     init {
         mgr.onPosition = ::onPosition
@@ -112,6 +120,12 @@ class RaceEngine(private val mgr: CarManager) {
             targetSpeed[addr] = if (addr == playerAddr) PLAYER_START else (AI_BASE + (aiIdx++ % 4) * AI_SPREAD)
             mgr.setLaneOffset(addr, 0f)
         }
+        // Arm the virtual combat model: equip the player's saved loadout, AI rivals a default.
+        val roster = tele.values.map { Triple(it.address, it.address == playerAddr, GameData.byModelId(it.modelId)?.name) }
+        val playerCarId = tele[playerAddr]?.modelId ?: -1
+        // RACE and TIME TRIAL are weapon-free; all other modes (battle/battle-race/one-shot/koth/takeover) arm weapons.
+        val weaponsEnabled = state.mode.lowercase().let { it != "race" && !it.startsWith("time") }
+        combat.init(roster, ProfileRepository.profile.loadoutFor(playerCarId), weaponsEnabled)
         Log.i(TAG, "Race.start: driving ${tele.size} cars, targets=$targetSpeed")
         publish(running = true)
         main.removeCallbacks(control)
@@ -122,6 +136,7 @@ class RaceEngine(private val mgr: CarManager) {
         targetSpeed.clear()
         tele.keys.forEach { mgr.drive(it, 0) }
         main.removeCallbacks(control)
+        combat.stop()
         Log.i(TAG, "Race.stop")
         publish(running = false)
     }
@@ -135,37 +150,45 @@ class RaceEngine(private val mgr: CarManager) {
 
     fun nudgeLane(deltaSteps: Int) {
         val addr = playerAddr ?: return
+        if (combat.steerBlocked(addr)) return                 // gravity/scrambler: controls locked
+        val steps = if (combat.invertSteer(addr)) -deltaSteps else deltaSteps  // "hacked" inverts input
         val cur = tele[addr]?.targetOffsetMm ?: 0f
-        val next = (cur + deltaSteps * LANE_STEP).coerceIn(-LANE_LIMIT, LANE_LIMIT)
+        val next = (cur + steps * LANE_STEP).coerceIn(-LANE_LIMIT, LANE_LIMIT)
         tele[addr]?.let { tele[addr] = it.copy(targetOffsetMm = next) }
         mgr.changeLane(addr, next, hSpeed = LANE_H_SPEED, hAccel = ACCEL)
         Log.i(TAG, "Race.nudgeLane: $addr -> ${next}mm")
         publish()
     }
 
-    fun fireWeapon() { /* Phase 4: item/weapon system */ }
+    /** Fire the player's attack bay (HUD top trigger) — resolves a target + applies the weapon. */
+    fun fireAttack() { playerAddr?.let { combat.fire(it, Bay.ATTACK, tele.values); publish() } }
+    /** Fire the player's support bay (HUD bottom trigger) — shield/boost/etc. */
+    fun fireSupport() { playerAddr?.let { combat.fire(it, Bay.SUPPORT, tele.values); publish() } }
 
-    /** Curve-aware target: cap to CURVE_SPEED while on a curve piece, else the full target. */
+    /** Curve-aware + combat-aware target: cap on curves, then scale by combat (boost/tractor/disabled). */
     private fun effectiveSpeed(addr: String, pieceId: Int): Int {
-        val target = targetSpeed[addr] ?: return 0
-        return if (RoadPieces.isCurve(pieceId)) minOf(target, CURVE_SPEED) else target
+        if (combat.isDisabled(addr)) return 0
+        val base = targetSpeed[addr] ?: return 0
+        val capped = if (RoadPieces.isCurve(pieceId)) minOf(base, CURVE_SPEED) else base
+        return (capped * combat.speedFactor(addr)).toInt()
     }
 
     /** Control loop: re-send each car's (curve-aware) target so a dropped write can't stall a car. */
     private val control = object : Runnable {
         override fun run() {
             if (!state.running) return
+            combat.tick(CONTROL_MS, tele.values)   // regen energy, expire effects, respawn, AI fire
             tele.keys.forEach { addr ->
                 val t = tele[addr]
-                if (t?.offTrack == true) {
-                    mgr.drive(addr, 0)   // car is off the track — hold it stopped until it re-localizes
+                if (t?.offTrack == true || combat.isDisabled(addr)) {
+                    mgr.drive(addr, 0)   // off the track, or disabled (weapon spin-out) — hold stopped
                 } else {
                     val s = effectiveSpeed(addr, t?.roadPieceId ?: -1)
-                    if (s > 0) mgr.drive(addr, s, ACCEL)
+                    if (s > 0) mgr.drive(addr, s, ACCEL) else mgr.drive(addr, 0)
                     // Lane self-heal: changeLane is one-shot, so re-apply the target if a write dropped.
-                    // Only on straights — re-applying mid-curve (where offset readings fluctuate) can
-                    // fight the car and cause spin-outs.
-                    if (t != null && !t.onCurve && kotlin.math.abs(t.offsetMm - t.targetOffsetMm) > LANE_HEAL_MM) {
+                    // Only on straights, and not while a weapon has locked this car's steering.
+                    if (t != null && !t.onCurve && !combat.steerBlocked(addr) &&
+                        kotlin.math.abs(t.offsetMm - t.targetOffsetMm) > LANE_HEAL_MM) {
                         mgr.changeLane(addr, t.targetOffsetMm, hSpeed = LANE_H_SPEED, hAccel = ACCEL)
                     }
                 }
@@ -226,7 +249,11 @@ class RaceEngine(private val mgr: CarManager) {
     private fun elapsed(): Long = if (startedAt == 0L) 0L else SystemClock.elapsedRealtime() - startedAt
 
     private fun publish(mode: String = state.mode, running: Boolean = state.running) {
-        state = RaceState(mode, running, elapsed(), tele.values.toList())
+        val cars = tele.values.map { t ->
+            val cc = combat.car(t.address)
+            if (cc != null) t.copy(health = cc.health, energy = cc.energy, disabled = cc.disabled) else t
+        }
+        state = RaceState(mode, running, elapsed(), cars, combat.playerHud(playerAddr))
     }
 }
 

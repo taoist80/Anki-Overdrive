@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -291,8 +292,17 @@ fun InRaceHudScreen(nav: OverdriveNav) {
                 }
             }
 
-            // Controls
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            // Vitals: player health + energy (live from the combat model)
+            st.playerHud?.let { hud ->
+                Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    VitalBar("ARMOR", hud.health / 100f, Color(0xFF3DDC84), Modifier.weight(1f))
+                    VitalBar("ENERGY", hud.energy / 100f, colors.blue, Modifier.weight(1f))
+                    if (hud.disabled) Text("DISABLED!", color = colors.danger, fontFamily = font, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                }
+            }
+
+            // Controls: steer · throttle · steer · attack bay · support bay
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 ControlButton("◄", colors.blue, Modifier.weight(1f)) { engine.nudgeLane(-1) }
                 Column(Modifier.weight(2f), horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("THROTTLE", fontFamily = font, color = colors.textDim, fontSize = 11.sp, letterSpacing = 1.sp)
@@ -303,7 +313,10 @@ fun InRaceHudScreen(nav: OverdriveNav) {
                     )
                 }
                 ControlButton("►", colors.blue, Modifier.weight(1f)) { engine.nudgeLane(1) }
-                WeaponButton { engine.fireWeapon() }
+                val atk = st.playerHud?.bays?.getOrNull(0)
+                val sup = st.playerHud?.bays?.getOrNull(1)
+                BayButton(atk?.itemName ?: "—", atk?.ready != false, colors.orange) { engine.fireAttack() }
+                BayButton(sup?.itemName ?: "—", sup?.ready != false, colors.gold) { engine.fireSupport() }
             }
             Spacer(Modifier.height(6.dp))
         }
@@ -328,13 +341,33 @@ private fun ControlButton(glyph: String, tint: Color, modifier: Modifier = Modif
     ) { Text(glyph, color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold) }
 }
 
+/** A weapon-bay trigger: shows the equipped item's name; dims + disables while cooling down. */
 @Composable
-private fun WeaponButton(onClick: () -> Unit) {
-    val colors = OverdriveTheme.colors
+private fun BayButton(name: String, ready: Boolean, tint: Color, onClick: () -> Unit) {
+    val font = OverdriveTheme.font
     Box(
-        Modifier.size(56.dp).clip(CircleShape).background(colors.orange).clickable(onClick = onClick),
+        Modifier.width(80.dp).height(56.dp).clip(RoundedCornerShape(8.dp))
+            .background(if (ready) tint else tint.copy(alpha = 0.3f))
+            .clickable(enabled = ready, onClick = onClick),
         contentAlignment = Alignment.Center,
-    ) { Text("⚡", fontSize = 24.sp) }
+    ) {
+        Text(name.take(14), color = Color.White, fontFamily = font, fontSize = 10.sp,
+            fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, maxLines = 2,
+            modifier = Modifier.padding(horizontal = 4.dp))
+    }
+}
+
+/** A thin labelled progress bar (armor/energy). */
+@Composable
+private fun VitalBar(label: String, frac: Float, tint: Color, modifier: Modifier = Modifier) {
+    val colors = OverdriveTheme.colors
+    val font = OverdriveTheme.font
+    Column(modifier) {
+        Text(label, fontFamily = font, color = colors.textDim, fontSize = 9.sp, letterSpacing = 1.sp)
+        Box(Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)).background(colors.barEmpty)) {
+            Box(Modifier.fillMaxWidth(frac.coerceIn(0f, 1f)).height(8.dp).clip(RoundedCornerShape(4.dp)).background(tint))
+        }
+    }
 }
 
 @Composable
