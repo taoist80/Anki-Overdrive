@@ -135,6 +135,7 @@ fun MatchSetupScreen(nav: OverdriveNav, mode: String, campaignMissionId: String)
     val engine = remember { RaceEngineHolder.engine }
     remember { GameData.load(ctx); 0 }
     var playerAddr by remember { mutableStateOf<String?>(null) }
+    var lapCount by remember { mutableStateOf(3) }
 
     OverdriveScaffold(title = "Match Setup", onBack = { nav.back() }) { mod ->
         Column(mod, verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -198,10 +199,19 @@ fun MatchSetupScreen(nav: OverdriveNav, mode: String, campaignMissionId: String)
             }
 
             Spacer(Modifier.height(4.dp))
+            // Game settings: laps to finish (mirrors 4.0.4's LAP COUNT stepper)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                Text("LAPS TO FINISH", fontFamily = font, color = colors.textDim, fontSize = 12.sp, letterSpacing = 1.sp)
+                ControlButton("–", colors.panelBorder, Modifier.size(40.dp)) { if (lapCount > 1) lapCount-- }
+                Text("$lapCount", fontFamily = font, color = colors.gold, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                ControlButton("+", colors.panelBorder, Modifier.size(40.dp)) { if (lapCount < 20) lapCount++ }
+            }
+            Spacer(Modifier.height(4.dp))
             PrimaryButton(
                 "Scan Track",
                 {
                     engine.setPlayer(effectivePlayer)
+                    engine.setLapTarget(lapCount)
                     engine.arm(mode)
                     nav.go(Routes.TrackScan)
                 },
@@ -294,11 +304,14 @@ fun InRaceHudScreen(nav: OverdriveNav) {
     val rank = st.standings.indexOfFirst { it.isPlayer }.let { if (it >= 0) it + 1 else 1 }
     var throttle by remember { mutableFloatStateOf(0.55f) }  // ~495 mm/s of 900 max — safe-cornering default
 
+    // Race over (a car reached the lap target) -> standings/loot.
+    LaunchedEffect(st.finished) { if (st.finished) nav.go(Routes.RaceResults()) }
+
     OverdriveBackground(heroImage = null) {
         Column(Modifier.fillMaxSize().padding(20.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 HudStat("POS", ordinal(rank))
-                HudStat("LAP", "${player?.laps ?: 0}")
+                HudStat("LAP", if (st.lapTarget > 0) "${player?.laps ?: 0}/${st.lapTarget}" else "${player?.laps ?: 0}")
                 HudStat("SPEED", "${player?.speedMmPerSec ?: 0}${if (player?.onCurve == true) "↘" else ""}")
                 HudStat("TIME", formatTime(st.elapsedMs))
                 Box(

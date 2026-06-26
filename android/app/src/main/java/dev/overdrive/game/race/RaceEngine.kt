@@ -43,6 +43,8 @@ data class RaceState(
     val playerHud: Combat.PlayerHud? = null,
     val scanning: Boolean = false,       // a track-scan lap is in progress
     val scanComplete: Boolean = false,   // every car has mapped a full lap (ready to race)
+    val lapTarget: Int = 3,              // laps to finish (RACE/BATTLE-RACE); 0 = endless (battle/koth)
+    val finished: Boolean = false,       // the race has ended (a car reached lapTarget)
 ) {
     /** Standings: most laps, then most segment transitions (track-progress tiebreaker). */
     val standings: List<CarTelemetry>
@@ -94,6 +96,12 @@ class RaceEngine(private val mgr: CarManager) {
     private var scanComplete = false
     private var scanStartedAt = 0L
     private var tickCount = 0
+    private val staged = HashSet<String>()   // cars parked at the finish line during scan staging
+    private var lapTarget = 3
+    private var finished = false
+
+    /** Set the laps-to-finish for the next race (from Match Setup). 0 = endless. */
+    fun setLapTarget(n: Int) { lapTarget = n.coerceAtLeast(0) }
     val combat = Combat()
 
     init {
@@ -130,7 +138,7 @@ class RaceEngine(private val mgr: CarManager) {
     fun startScan() {
         arm(state.mode)            // snapshot the connected cars (player = designated)
         mgr.stopScan()             // free the BLE radio for driving
-        scanning = true; scanComplete = false
+        scanning = true; scanComplete = false; finished = false; staged.clear()
         scanStartedAt = SystemClock.elapsedRealtime()
         tele.keys.forEach { addr ->
             targetSpeed[addr] = SCAN_SPEED
@@ -147,13 +155,20 @@ class RaceEngine(private val mgr: CarManager) {
         scanning = false; scanComplete = true
         tele.keys.forEach { mgr.drive(it, 0) }
         main.removeCallbacks(control)
-        Log.i(TAG, "Track scan complete${if (timedOut) " (timed out)" else ""}")
+        Log.i(TAG, "Track scan complete${if (timedOut) " (timed out — cars may not be at the line)" else " — all cars staged at start"}")
         publish(running = false)
+    }
+
+    /** First car to reach the lap target ends the race; stops everyone and flags [finished] for Results. */
+    private fun finishRace(winnerAddr: String) {
+        finished = true
+        Log.i(TAG, "Race.finish: ${tele[winnerAddr]?.name ?: winnerAddr} reached $lapTarget laps")
+        stop()   // stops cars + control loop; publish(running=false) carries finished=true
     }
 
     fun start() {
         arm(state.mode)   // re-snapshot: include any car that finished connecting after Match Setup
-        scanning = false; mgr.stopScan()
+        scanning = false; finished = false; mgr.stopScan()
         startedAt = SystemClock.elapsedRealtime()
         var aiIdx = 0
         tele.keys.forEach { addr ->
@@ -219,20 +234,18 @@ class RaceEngine(private val mgr: CarManager) {
         override fun run() {
             if (!state.running && !scanning) return
             if (scanning) {
-                // Mapped = crossed the finish piece OR driven enough segments (track-agnostic: not every
-                // track's start piece is id 33). A car that's currently off-track can't be "mapped".
-                val mapped = tele.isNotEmpty() && tele.values.all {
-                    !it.offTrack && (it.laps >= 1 || it.transitions >= SCAN_MIN_TRANSITIONS)
-                }
+                // Scan = map a lap, then stage each car at the finish line (onPosition adds to `staged`)
+                // so every car starts the race from the same place. Done when all are staged (or timeout).
+                val allStaged = tele.isNotEmpty() && staged.containsAll(tele.keys)
                 val timedOut = SystemClock.elapsedRealtime() - scanStartedAt > SCAN_TIMEOUT_MS
-                if (mapped || timedOut) { finishScan(timedOut); return }
+                if (allStaged || timedOut) { finishScan(timedOut); return }
             } else {
                 combat.tick(CONTROL_MS, tele.values)   // regen energy, expire effects, respawn, AI fire
             }
             tele.keys.forEach { addr ->
                 val t = tele[addr]
-                if (t?.offTrack == true || combat.isDisabled(addr)) {
-                    mgr.drive(addr, 0)   // off the track, or disabled (weapon spin-out) — hold stopped
+                if (t?.offTrack == true || combat.isDisabled(addr) || (scanning && addr in staged)) {
+                    mgr.drive(addr, 0)   // off-track, disabled, or staged at the line — hold stopped
                 } else {
                     val s = effectiveSpeed(addr, t?.roadPieceId ?: -1)
                     if (s > 0) mgr.drive(addr, s, ACCEL) else mgr.drive(addr, 0)
@@ -281,10 +294,22 @@ class RaceEngine(private val mgr: CarManager) {
             // so counting "return to first-seen id" over-counts — only the finish piece is singular.
             if (newPiece == FINISH_PIECE_ID && prev != -1) laps += 1
             lastPiece[addr] = newPiece
-            if (state.running) mgr.drive(addr, effectiveSpeed(addr, newPiece), ACCEL) // react to curve immediately
+            // Scan staging: once a car has mapped a lap, park it at the finish line so every car
+            // starts the race from the same place (fair start), regardless of where it began the scan.
+            val stageNow = scanning && addr !in staged && newPiece == FINISH_PIECE_ID &&
+                (t.transitions >= SCAN_MIN_TRANSITIONS || laps >= 1)
+            if (stageNow) {
+                staged.add(addr); mgr.drive(addr, 0)
+                Log.i(TAG, "Race.scan: ${t.name} staged at start line")
+            } else if (state.running || (scanning && addr !in staged)) {
+                mgr.drive(addr, effectiveSpeed(addr, newPiece), ACCEL) // react to curve immediately
+            }
+            // Race finish: the first car to reach the lap target ends the race.
+            if (state.running && !finished && lapTarget > 0 && laps >= lapTarget) finishRace(addr)
         }
         // Any position update means the car is on the track again — clear off-track + resume.
-        if (t.offTrack && state.running) mgr.drive(addr, effectiveSpeed(addr, newPiece), ACCEL)
+        if (t.offTrack && (state.running || (scanning && addr !in staged)))
+            mgr.drive(addr, effectiveSpeed(addr, newPiece), ACCEL)
 
         tele[addr] = t.copy(
             speedMmPerSec = p.speedMmPerSec,
@@ -312,7 +337,7 @@ class RaceEngine(private val mgr: CarManager) {
             val cc = combat.car(t.address)
             if (cc != null) t.copy(health = cc.health, energy = cc.energy, disabled = cc.disabled) else t
         }
-        state = RaceState(mode, running, elapsed(), cars, combat.playerHud(playerAddr), scanning, scanComplete)
+        state = RaceState(mode, running, elapsed(), cars, combat.playerHud(playerAddr), scanning, scanComplete, lapTarget, finished)
     }
 }
 
