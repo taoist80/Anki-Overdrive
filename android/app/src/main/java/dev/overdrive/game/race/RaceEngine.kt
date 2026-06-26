@@ -76,7 +76,8 @@ class RaceEngine(private val mgr: CarManager) {
         const val FINISH_PIECE_ID = 33  // the unique start/finish piece ('B', isFinishLine) from tracks.json
         const val LANE_HEAL_MM = 12f    // re-send a lane change if the car is >this far from its target
         const val SCAN_SPEED = 300      // mm/s during the track-scan lap (slow = reliable localization)
-        const val SCAN_TIMEOUT_MS = 60_000L  // give up waiting for every car to complete its scan lap
+        const val SCAN_TIMEOUT_MS = 45_000L  // give up waiting for every car to complete its scan lap
+        const val SCAN_MIN_TRANSITIONS = 10  // a car counts as "mapped" after this many segments (track-agnostic; finish piece may not be 33)
     }
 
     var state by mutableStateOf(RaceState())
@@ -92,6 +93,7 @@ class RaceEngine(private val mgr: CarManager) {
     private var scanning = false
     private var scanComplete = false
     private var scanStartedAt = 0L
+    private var tickCount = 0
     val combat = Combat()
 
     init {
@@ -217,8 +219,11 @@ class RaceEngine(private val mgr: CarManager) {
         override fun run() {
             if (!state.running && !scanning) return
             if (scanning) {
-                // Scan lap done when every car has crossed the finish line once (mapped a full lap).
-                val mapped = tele.isNotEmpty() && tele.values.all { it.laps >= 1 }
+                // Mapped = crossed the finish piece OR driven enough segments (track-agnostic: not every
+                // track's start piece is id 33). A car that's currently off-track can't be "mapped".
+                val mapped = tele.isNotEmpty() && tele.values.all {
+                    !it.offTrack && (it.laps >= 1 || it.transitions >= SCAN_MIN_TRANSITIONS)
+                }
                 val timedOut = SystemClock.elapsedRealtime() - scanStartedAt > SCAN_TIMEOUT_MS
                 if (mapped || timedOut) { finishScan(timedOut); return }
             } else {
@@ -237,6 +242,14 @@ class RaceEngine(private val mgr: CarManager) {
                         kotlin.math.abs(t.offsetMm - t.targetOffsetMm) > LANE_HEAL_MM) {
                         mgr.changeLane(addr, t.targetOffsetMm, hSpeed = LANE_H_SPEED, hAccel = ACCEL)
                     }
+                }
+            }
+            // Diagnostics: every ~3s, dump each car's live driving state (helps debug spin/off-track).
+            if (tickCount++ % 12 == 0) {
+                val phase = if (scanning) "SCAN" else "RACE"
+                tele.values.forEach { c ->
+                    Log.i(TAG, "$phase ${c.name} piece=${c.roadPieceId} seg=${c.transitions} lap=${c.laps} " +
+                        "spd=${c.speedMmPerSec} off=${c.offTrack} curve=${c.onCurve} tgt=${targetSpeed[c.address]}")
                 }
             }
             publish()
