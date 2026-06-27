@@ -124,38 +124,99 @@ fun GameModeSelectScreen(nav: OverdriveNav) {
     }
 }
 
+/** 3.4 sb_GameModeDetail: mode art + description, Mutators overlay, Continue → Match Setup. */
 @Composable
 fun GameModeDetailScreen(nav: OverdriveNav, mode: String) {
     val ctx = LocalContext.current
+    val colors = OverdriveTheme.colors
+    val font = OverdriveTheme.font
     remember { ContentRepository.load(ctx); 0 }
     val gm = ContentRepository.modeByInternalName(mode)
-    WireframeScreen(
-        title = gm?.title ?: mode,
-        onBack = { nav.back() },
-        subtitle = (gm?.description ?: "Game mode details.") +
-            "\n\nConfigure laps, teams, and mutators, then continue to match setup.",
-        actions = listOf(
-            NavAction("Mutators", { nav.showOverlay(Overlay.MutatorPicker) }, ButtonAccent.Outline),
-            NavAction("Continue", { nav.go(Routes.MatchSetup(mode = gm?.title ?: mode)) }, ButtonAccent.Blue),
-        ),
-    )
+    val art = rememberAsset(gm?.imageAsset)
+    OverdriveScaffold(title = gm?.title ?: mode, onBack = { nav.back() }) { mod ->
+        Column(
+            mod.verticalScroll(rememberScrollState()).widthIn(max = 520.dp).padding(vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            if (art != null) Image(art, gm?.title, Modifier.fillMaxWidth().heightIn(max = 200.dp), contentScale = ContentScale.Fit)
+            gm?.description?.let { Text(it, fontFamily = font, color = colors.textPrimary, fontSize = 15.sp, textAlign = TextAlign.Center) }
+            PrimaryButton("Mutators", { nav.showOverlay(Overlay.MutatorPicker) }, Modifier.fillMaxWidth(), ButtonAccent.Outline)
+            PrimaryButton(ContentRepository.strings.get("ankiButton.continue", "Continue"), { nav.go(Routes.MatchSetup(mode = gm?.title ?: mode)) }, Modifier.fillMaxWidth(), ButtonAccent.Blue)
+        }
+    }
+}
+
+/** 3.4 sb_PlayerSelect_View: assign up to 4 slots (Player / AI / Empty). */
+@Composable
+fun PlayerSelectScreen(nav: OverdriveNav) {
+    val colors = OverdriveTheme.colors
+    val font = OverdriveTheme.font
+    val cycle = listOf("EMPTY", "PLAYER", "AI")
+    var slots by remember { mutableStateOf(listOf("PLAYER", "AI", "AI", "EMPTY")) }
+    OverdriveScaffold(title = "Players", onBack = { nav.back() }) { mod ->
+        Column(mod.verticalScroll(rememberScrollState()).widthIn(max = 460.dp).padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Tap a slot to set Player / AI / Empty (up to 4).", fontFamily = font, color = colors.textDim, fontSize = 14.sp)
+            slots.forEachIndexed { i, st ->
+                val accent = when (st) { "PLAYER" -> colors.blue; "AI" -> colors.orange; else -> colors.barEmpty }
+                OverdrivePanel(Modifier.fillMaxWidth().clickable {
+                    slots = slots.toMutableList().also { it[i] = cycle[(cycle.indexOf(st) + 1) % cycle.size] }
+                }) { inner ->
+                    Row(inner, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                        Box(Modifier.size(38.dp).clip(CircleShape).background(accent.copy(alpha = 0.30f)).border(2.dp, accent, CircleShape), contentAlignment = Alignment.Center) {
+                            Text("P${i + 1}", fontFamily = font, color = colors.textPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Text(st, fontFamily = font, color = colors.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+            PrimaryButton("Continue", { nav.go(Routes.VehicleSelect) }, Modifier.fillMaxWidth(), ButtonAccent.Blue)
+        }
+    }
+}
+
+/** 3.4 VehicleSelect_ViewController: pick a vehicle from the roster (real 2.6 car sprites + logos). */
+@Composable
+fun VehicleSelectScreen(nav: OverdriveNav) {
+    val ctx = LocalContext.current
+    remember { GameData.load(ctx); 0 }
+    val cars = GameData.cars
+    var selected by remember { mutableStateOf(cars.firstOrNull()?.id ?: -1) }
+    OverdriveScaffold(title = "Select Vehicle", onBack = { nav.back() }) { mod ->
+        Column(mod) {
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(150.dp),
+                modifier = Modifier.weight(1f),
+                contentPadding = PaddingValues(vertical = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                items(cars) { c -> VehicleCell(c, selected == c.id) { selected = c.id } }
+            }
+            PrimaryButton("To Match Setup", { nav.go(Routes.MatchSetup()) }, Modifier.fillMaxWidth().padding(vertical = 8.dp), ButtonAccent.Gold)
+        }
+    }
 }
 
 @Composable
-fun PlayerSelectScreen(nav: OverdriveNav) = WireframeScreen(
-    title = "Players",
-    onBack = { nav.back() },
-    subtitle = "Assign player slots / teams (up to 4). Lobby logic wires in Phase 2.",
-    actions = listOf(NavAction("Continue", { nav.go(Routes.VehicleSelect) }, ButtonAccent.Blue)),
-)
-
-@Composable
-fun VehicleSelectScreen(nav: OverdriveNav) = WireframeScreen(
-    title = "Assign Vehicles",
-    onBack = { nav.back() },
-    subtitle = "Vehicle discovery + slot assignment happens in Match Setup.",
-    actions = listOf(NavAction("To Match Setup", { nav.go(Routes.MatchSetup()) }, ButtonAccent.Blue)),
-)
+private fun VehicleCell(c: CarType, selected: Boolean, onClick: () -> Unit) {
+    val colors = OverdriveTheme.colors
+    val font = OverdriveTheme.font
+    val sprite = rememberAsset(c.spriteFile?.let { "cars/$it" })
+    val logo = rememberAsset(c.logoAsset)
+    val shape = RoundedCornerShape(12.dp)
+    Column(
+        Modifier.clip(shape).border(2.dp, if (selected) colors.blue else colors.panelBorder, shape)
+            .background(colors.panel.copy(alpha = 0.6f)).clickable(onClick = onClick).padding(12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        if (sprite != null) Image(sprite, c.name, Modifier.fillMaxWidth().height(70.dp), contentScale = ContentScale.Fit)
+        else Box(Modifier.fillMaxWidth().height(70.dp))
+        Spacer(Modifier.height(8.dp))
+        if (logo != null) Image(logo, c.name, Modifier.fillMaxWidth().height(20.dp), contentScale = ContentScale.Fit)
+        else Text(c.name.uppercase(), fontFamily = font, color = colors.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+    }
+}
 
 /**
  * Match Setup (4.0.4 full-roster car select): every car shown under Supercars / Supertrucks / Drive

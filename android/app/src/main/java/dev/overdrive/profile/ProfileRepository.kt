@@ -31,6 +31,7 @@ data class Profile(
     val inventory: Map<String, Int> = emptyMap(),       // itemId -> count (loot rewards)
     val vehicleUpgrades: Map<String, Int> = emptyMap(), // "<carId>:<track>" -> level
     val loadout: Map<String, String> = emptyMap(),      // "<carId>:<bay>" -> equipped itemId
+    val avatar: String = "",                            // chosen avatar = commander id (ui/commanders/<portrait>)
 ) {
     val level: Int get() = 1 + xp / 1000
     val totalStars: Int get() = missions.values.sumOf { it.completedTaskIds.size }
@@ -92,6 +93,12 @@ object ProfileRepository {
 
     fun addCoins(ctx: Context, n: Int) {
         profile = profile.copy(coins = profile.coins + n)
+        persist(ctx)
+    }
+
+    /** Set the chosen avatar (a commander id) and persist + sync. */
+    fun setAvatar(ctx: Context, avatarId: String) {
+        profile = profile.copy(avatar = avatarId)
         persist(ctx)
     }
 

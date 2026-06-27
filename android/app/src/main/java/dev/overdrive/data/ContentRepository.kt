@@ -8,6 +8,8 @@ import dev.overdrive.data.model.Commander
 import dev.overdrive.data.model.Commander26
 import dev.overdrive.data.model.GameMode
 import dev.overdrive.data.model.GameModeDisplayFile
+import dev.overdrive.data.model.Medal
+import dev.overdrive.data.model.MedalFile
 import dev.overdrive.data.model.Mission
 import dev.overdrive.data.model.RawStarChallenge
 import kotlinx.serialization.json.Json
@@ -39,6 +41,12 @@ object ContentRepository {
     var commanders26ById: Map<String, Commander26> = emptyMap()
         private set
     var starChallengesById: Map<String, RawStarChallenge> = emptyMap()
+        private set
+    /** The authentic 2.6 medal catalog (icons under ui/medals/, names resolved from asset-strings). */
+    var medals: List<Medal> = emptyList()
+        private set
+    /** Named-track piece layouts (track_01.. → ordered piece types), parsed from the 3.4 modular maps. */
+    var trackLayouts: Map<String, List<String>> = emptyMap()
         private set
 
     val cars: List<CarType> get() = GameData.cars
@@ -75,6 +83,15 @@ object ContentRepository {
         commanders26ById = commanders26.associateBy { it.id }
         val challenges: List<RawStarChallenge> = json.decodeFromString(read(ctx, "gamedata/star_challenges.json"))
         starChallengesById = challenges.associateBy { it.id }
+
+        // Authentic 2.6 medals: resolve the string-key name/description against the asset-strings table.
+        val assetStrings = Strings.load(ctx, "gamedata/asset-strings-en.json")
+        medals = json.decodeFromString<MedalFile>(read(ctx, "gamedata/medals.json")).medals
+            .filter { it.enabled }
+            .sortedBy { it.sort }
+            .map { it.copy(name = assetStrings.get(it.name, it.id), description = assetStrings.get(it.description, "")) }
+
+        trackLayouts = json.decodeFromString(read(ctx, "gamedata/track_layouts.json"))
 
         ItemRepository.load(ctx)   // real item/weapon/loot/upgrade catalog (Phase 7)
 
