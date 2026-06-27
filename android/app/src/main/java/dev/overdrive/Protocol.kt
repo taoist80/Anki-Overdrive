@@ -51,24 +51,25 @@ object Protocol {
         ByteBuffer.allocate(capacity).order(ByteOrder.LITTLE_ENDIAN).apply(fill).array()
 
     /**
-     * SDK mode. We **don't** override localization by default: with override on, the car expects the host
-     * to feed it position overrides (which a full planner like 2.6's does) — we don't, so the car's own
-     * localization + per-piece curve speed-limiting is effectively disabled, and it flies off curves /
-     * drives wrong-way / can't recover. Letting the firmware localize the scanned track (+ respect its
-     * per-piece speed limits) is the stable, known-good behaviour for our direct-control model.
+     * SDK mode. We **must** override localization: our app is the basestation/localization authority and
+     * the car drives *raw* at the speed we command. Without override, the car tries to self-localize an
+     * unmapped track (impossible on a fresh scan) and won't move — and `respectRoadPieceSpeedLimit` with
+     * no road network caps it to 0. (Letting the firmware drive would need 2.6's full on-phone planner,
+     * which we don't run.) So curve safety is handled manually in [RaceEngine], not by the firmware.
      */
-    fun sdkMode(enable: Boolean = true, overrideLocalization: Boolean = false): ByteArray =
+    fun sdkMode(enable: Boolean = true, overrideLocalization: Boolean = true): ByteArray =
         msg(MSG_SDK_MODE, byteArrayOf(
             (if (enable) 1 else 0).toByte(),
             (if (overrideLocalization) SDK_OPTION_OVERRIDE_LOCALIZATION else 0).toByte(),
         ))
 
     /**
-     * SET_SPEED. The 3rd byte is `respectRoadPieceSpeedLimit` — when 1, the firmware auto-slows for the
-     * scanned track's per-piece limits (curves/jumps), which is what keeps the car on the track. 4.0.4
-     * sends 1 everywhere in-race; we were sending 0, so nothing capped curves and cars flew off.
+     * SET_SPEED. The 3rd byte is `respectRoadPieceSpeedLimit`. It only works when the firmware owns the
+     * track (its own localization + road network) — under our override-localization model the car has no
+     * network, so `1` caps it to 0 and it won't move. So we send `0` (raw speed) and handle curve safety
+     * manually in [RaceEngine] (4.0.4/2.6 send 1 only because their on-phone planner feeds the network).
      */
-    fun setSpeed(mmPerSec: Int, accelMmPerSec2: Int = 1000, respectLimits: Boolean = true): ByteArray =
+    fun setSpeed(mmPerSec: Int, accelMmPerSec2: Int = 1000, respectLimits: Boolean = false): ByteArray =
         msg(MSG_SET_SPEED, le(5) { putShort(mmPerSec.toShort()); putShort(accelMmPerSec2.toShort()); put(if (respectLimits) 1 else 0) })
 
     fun setOffset(offsetMm: Float): ByteArray =

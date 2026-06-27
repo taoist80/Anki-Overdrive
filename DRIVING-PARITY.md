@@ -21,12 +21,11 @@ is all in GDScript and is the reference below.
 - **`respectRoadPieceSpeedLimit=true`** on every `setSpeed`.
 - **Wrong-way U-turn** rewritten to the 4.0.4 start-piece-reverse trigger (kills the spurious-flip chaos).
 - **Speeds/accel matched** to the proven values (AI base 800 ×tier, accel 700). Manual curve cap kept as a backstop.
-- **Localization override OFF (headline):** `sdkMode` no longer sets `OVERRIDE_LOCALIZATION`. With it on, the
-  car waited for host position overrides we never send — disabling its own localization + per-piece curve
-  limiting (the root of fly-offs / wrong-way / no-recovery). Now the firmware localizes the scanned track
-  and limits curves itself, which is `RoadNetwork::InitTrackMaxSpeedFromPieces` realized on the car — so
-  "step 2 (per-piece speed limits)" is delivered without a separate road-network upload. (2.6 overrides only
-  because it runs the full planner; we don't, so we let the firmware drive.)
+- **Localization override stays ON (correction).** I briefly turned it OFF to let the firmware curve-limit,
+  but that **broke the scan**: with override off the car tries to self-localize an unmapped track (can't) and
+  `respectRoadPieceSpeedLimit` with no road network caps it to 0 → it never moves. Our model *requires*
+  override (we're the basestation; the car drives raw at our speed) — so **curve safety must be done by us**,
+  not the firmware. That's why we need the planner (next). `respectRoadPieceSpeedLimit` reverted to 0.
 - **2.6 AI driver logic ported** ([DriverProfile.kt]): each commander's `vehicle_setup`+tier maps to 2.6's
   `ai_trait_configuration` — **aggressive** trait (lazy/low/hostile/tactical/ultra) → real item-use cadence
   (9s…1.25s) + follow-distance, **speedy** trait (autopilot/novice/relaxed/normal/hyper) → race speed.

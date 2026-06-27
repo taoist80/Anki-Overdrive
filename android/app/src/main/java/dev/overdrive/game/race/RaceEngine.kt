@@ -73,7 +73,8 @@ class RaceEngine(private val mgr: CarManager) {
         const val CURVE_SPEED = 450     // mm/s ceiling while on a curve piece
         const val HOLD_DT_S = 0.08f     // weapon charge tick (matches the HUD's ~80ms hold loop)
         const val PLAYER_START = 500    // mm/s default when the race starts
-        const val AI_BASE = 800         // mm/s base for AI rivals (4.0.4 bots run ~1000); scaled by tier profile
+        const val AI_BASE = 600         // mm/s base for AI rivals, ×tier profile. (Lower than 4.0.4's ~1000 bots
+                                        // because we curve-cap manually/reactively, not via the firmware planner.)
         const val AI_SPREAD = 40        // mm/s step between AI rivals
         const val ACCEL = 700           // mm/s^2 — matches 4.0.4 (gentle accel + firmware curve limits = stable)
         const val UTURN_COOLDOWN_MS = 3000L  // min gap between wrong-way u-turns (a u-turn takes ~1-2s to execute)
