@@ -46,8 +46,8 @@ fun SplashScreen(nav: OverdriveNav) {
     val logo = rememberAsset("ui/overdrive_title.png")
     val p = remember { Animatable(0f) }
     LaunchedEffect(Unit) {
-        p.animateTo(1f, tween(820, easing = FastOutSlowInEasing))
-        delay(650)                       // hold on the full logo
+        p.animateTo(1f, tween(900, easing = FastOutSlowInEasing))
+        delay(1300)                      // hold on the full logo so the splash is clearly seen
         nav.controller.navigate(Routes.Home) { popUpTo(Routes.Splash) { inclusive = true } }
     }
     OverdriveBackground {

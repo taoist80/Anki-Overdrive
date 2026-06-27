@@ -77,6 +77,7 @@ import dev.overdrive.CarType
 import dev.overdrive.GameData
 import dev.overdrive.data.ContentRepository
 import dev.overdrive.data.ItemRepository
+import dev.overdrive.data.model.GameMode
 import dev.overdrive.ui.theme.rememberAsset
 import dev.overdrive.game.MetaGame
 import dev.overdrive.game.campaign.CampaignEngine
@@ -94,33 +95,61 @@ import dev.overdrive.ui.components.OverdriveBackground
 import dev.overdrive.ui.components.OverdrivePanel
 import dev.overdrive.ui.components.OverdriveScaffold
 import dev.overdrive.ui.components.PrimaryButton
+import dev.overdrive.ui.components.RacingName
 import dev.overdrive.ui.components.CoinPill
 import dev.overdrive.profile.ProfileRepository
 import dev.overdrive.ui.components.StarRow
 import dev.overdrive.ui.components.WireframeScreen
 import dev.overdrive.ui.theme.OverdriveTheme
 
+/**
+ * Select Mode — the authentic 4.0.4 layout (reference/screenshots/ddl404/03_openplay): a horizontal
+ * carousel of large full-height mode cards (RACE / BATTLE / …), each full-bleed `ui_gameMode_*` art
+ * with a bottom scrim, the racing-name title in the mode's tint, and its description.
+ */
 @Composable
 fun GameModeSelectScreen(nav: OverdriveNav) {
     val ctx = LocalContext.current
     remember { ContentRepository.load(ctx); 0 }
     val modes = ContentRepository.modes
     OverdriveScaffold(title = "Select Mode", onBack = { nav.back() }) { mod ->
-        LazyVerticalGrid(
-            columns = GridCells.Adaptive(180.dp),
-            modifier = mod,
+        LazyRow(
+            modifier = mod.fillMaxSize().padding(vertical = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-            contentPadding = PaddingValues(vertical = 12.dp),
+            contentPadding = PaddingValues(horizontal = 4.dp),
         ) {
-            items(modes) { m ->
-                ModeTile(
-                    title = m.title,
-                    image = m.imageAsset,
-                    subtitle = m.description?.take(90)?.let { if (it.length == 90) "$it…" else it },
-                    accent = Color(m.tintArgb),
-                    onClick = { nav.go(Routes.GameModeDetail(m.internalName)) },
-                )
+            lazyItems(modes) { m ->
+                ModeCard(m, Modifier.width(300.dp)) { nav.go(Routes.GameModeDetail(m.internalName)) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ModeCard(m: GameMode, modifier: Modifier, onClick: () -> Unit) {
+    val colors = OverdriveTheme.colors
+    val font = OverdriveTheme.font
+    val art = rememberAsset(m.imageAsset)
+    val accent = Color(m.tintArgb)
+    val shape = RoundedCornerShape(16.dp)
+    Box(
+        modifier
+            .fillMaxHeight()
+            .clip(shape)
+            .background(colors.panel.copy(alpha = 0.5f))
+            .border(1.dp, accent.copy(alpha = 0.7f), shape)
+            .clickable(onClick = onClick),
+    ) {
+        if (art != null) {
+            Image(art, m.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.42f to Color.Transparent, 1f to Color(0xE6120A22))))
+        }
+        Box(Modifier.fillMaxWidth().height(4.dp).background(accent))   // top accent stripe
+        Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.Bottom) {
+            RacingName(m.title, fontSize = 30, hlColor = accent)
+            Spacer(Modifier.height(8.dp))
+            m.description?.let {
+                Text(it, fontFamily = font, color = colors.textDim, fontSize = 13.sp, maxLines = 3)
             }
         }
     }

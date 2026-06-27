@@ -1,6 +1,7 @@
 package dev.overdrive.ui.screens
 
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,6 +22,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -35,62 +38,49 @@ import dev.overdrive.ui.theme.OverdriveTheme
 import dev.overdrive.ui.theme.rememberAsset
 
 /**
- * 4.0.4 main menu: rose ANKI/OVERDRIVE wordmark over the violet nebula, with the four entries as
- * glowing letter-spaced text — Extras · Single Player · Multiplayer · Garage (Garage kept as its own
- * top-level entry per the restyle decision). Top chrome keeps the driver name + coin balance.
+ * 4.0.4 main menu (reference/screenshots/ddl404/01_main_menu): the light ANKI/OVERDRIVE wordmark
+ * centered over the violet nebula, with three glowing letter-spaced entries — Extras · Single Player ·
+ * Multiplayer. Clean: no tagline, no top chrome. Garage lives under Extras, matching the original.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun HomeScreen(nav: OverdriveNav) {
-    val ctx = LocalContext.current
-    remember { ProfileRepository.load(ctx); 0 }
-    val profile = ProfileRepository.profile
     val colors = OverdriveTheme.colors
     val font = OverdriveTheme.font
-    OverdriveBackground {
-        val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-        Column(Modifier.fillMaxSize().padding(top = top)) {
-            // Top chrome: driver name (left) + coin balance (right)
-            Box(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp)) {
-                Text(
-                    profile.driverName.uppercase(),
-                    fontFamily = font, color = colors.textDim, fontSize = 14.sp, letterSpacing = 1.sp,
-                    modifier = Modifier.align(Alignment.CenterStart).clickable { nav.go(Routes.ProfileGraph) },
-                )
-                Box(Modifier.align(Alignment.CenterEnd).clickable { nav.go(Routes.CoinShop) }) {
-                    CoinPill(amount = profile.coins, font = font)
-                }
+    val bg = rememberAsset("ui/global-background.png")   // authentic 2.6 menu backdrop (cityscape horizon)
+    Box(Modifier.fillMaxSize().background(colors.background)) {
+        if (bg != null) Image(bg, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        // violet legibility scrim so the wordmark + menu read over the bright 2.6 horizon
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0x66140A22), Color(0xCC140A22)))))
+        Column(
+            Modifier.fillMaxSize().padding(28.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            val logo = rememberAsset("ui/overdrive_title.png")
+            if (logo != null) {
+                Image(logo, "ANKI OVERDRIVE", Modifier.fillMaxWidth(0.44f), contentScale = ContentScale.Fit)
+            } else {
+                Text("ANKI", fontFamily = font, color = colors.rose, fontSize = 18.sp, fontWeight = FontWeight.Bold, letterSpacing = 9.sp)
+                Text("OVERDRIVE", fontFamily = font, color = colors.rose, fontSize = 56.sp, fontWeight = FontWeight.Bold, letterSpacing = 4.sp)
             }
-
-            Column(
-                Modifier.fillMaxSize().padding(horizontal = 28.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
+            Spacer(Modifier.height(56.dp))
+            FlowRow(
+                Modifier.widthIn(max = 680.dp),
+                horizontalArrangement = Arrangement.spacedBy(48.dp, Alignment.CenterHorizontally),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                // Authentic 4.0.4 OVERDRIVE title art (already pink/violet — on-palette); text fallback if missing.
-                val logo = rememberAsset("ui/overdrive_title.png")
-                if (logo != null) {
-                    Image(logo, "ANKI OVERDRIVE", Modifier.fillMaxWidth(0.46f), contentScale = ContentScale.Fit)
-                } else {
-                    Text("ANKI", fontFamily = font, color = colors.rose, fontSize = 18.sp, fontWeight = FontWeight.Bold, letterSpacing = 9.sp)
-                    Text("OVERDRIVE", fontFamily = font, color = colors.rose, fontSize = 56.sp, fontWeight = FontWeight.Bold, letterSpacing = 4.sp)
-                }
-                Spacer(Modifier.height(10.dp))
-                Text("X  ·  REBUILT", fontFamily = font, color = colors.gold, fontSize = 16.sp, letterSpacing = 6.sp)
-                Spacer(Modifier.height(48.dp))
-
-                FlowRow(
-                    Modifier.widthIn(max = 680.dp),
-                    horizontalArrangement = Arrangement.spacedBy(40.dp, Alignment.CenterHorizontally),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                ) {
-                    MenuEntry("Extras") { nav.go(Routes.Extras) }
-                    MenuEntry("Single Player") { nav.go(Routes.SinglePlayer) }
-                    MenuEntry("Multiplayer") { nav.go(Routes.Multiplayer) }
-                    MenuEntry("Garage") { nav.go(Routes.GarageGraph) }
-                }
+                MenuEntry("Extras") { nav.go(Routes.Extras) }
+                MenuEntry("Single Player") { nav.go(Routes.SinglePlayer) }
+                MenuEntry("Multiplayer") { nav.go(Routes.Multiplayer) }
             }
         }
+        // tagline kept, subtle, as a footer so the menu stays authentic
+        Text(
+            "X · REBUILT",
+            fontFamily = font, color = colors.gold.copy(alpha = 0.7f), fontSize = 11.sp, letterSpacing = 5.sp,
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp),
+        )
     }
 }
 
