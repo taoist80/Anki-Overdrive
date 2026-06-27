@@ -86,7 +86,11 @@ object Routes {
     // ---- 4.0.4 main-menu hubs (Home → Extras | Single Player | Multiplayer | Garage) ----
     @Serializable object SinglePlayer   // Campaign · Open Play · Test Track
     @Serializable object Extras         // Store · Profile · Coin Shop · Guide · Settings
-    @Serializable object Multiplayer    // "coming soon" placeholder until Phase 12
+
+    // ---- Multiplayer graph (Phase 12 — local Wi-Fi, host/join → lobby; see ARTIFACTS.md MP plan) ----
+    @Serializable object Multiplayer    // hub: host or join (sb_Join_ViewController equivalent)
+    @Serializable object MpJoin         // host-discovery list + code entry (ClientWait_VC_OD equivalent)
+    @Serializable object MpLobby        // shared host/client lobby (OpenPlayHostLobby / MultiPlayerClientLobby)
 
     // ---- Top-level singletons ----
     @Serializable object CoinShop

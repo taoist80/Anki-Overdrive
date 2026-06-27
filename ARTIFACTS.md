@@ -15,6 +15,7 @@ claude.ai UI action (these links make them cross-**conversation**, not public).
 | **Campaign mockup v1** | https://claude.ai/code/artifact/f28b0362-48fa-4c31-ac86-cccc861ef143 | First campaign pass. | 2.6 | superseded by v2 |
 | **Startup / Victory / Results** | https://claude.ai/code/artifact/2ee8eb61-a4a8-4e9b-8397-2c13e7ae02fa | 2.6 victory/defeat + results (loot) end screens and the 4.0.4 startup sequence. | 2.6 + 4.0.4 | current — built |
 | **Pre-race screen coverage** | https://claude.ai/code/artifact/77a54b59-fba1-41eb-8981-997d5aa279fe | Live coverage map of every pre-race screen (matched / partial / wireframe) with per-screen layout + asset source. Generated from `reference/screen-coverage.json` via `tools/build_coverage_artifact.py`. | 2.6 → 3.4 → 4.0.4 | current — 46 matched / 2 partial / 0 wireframe |
+| **Multiplayer build plan** | https://claude.ai/code/artifact/007e2592-4a17-4eb2-b4ce-515b055c1a6f | The Phase 12 local-Wi-Fi multiplayer plan: host-authoritative model (host phone = basestation, Node `server/` = broker + data) + the RE'd MP **choice graph** (host/join → lobby-sync → shared race spine), the wire protocol (faithful subset of 3.4.0 `PlayerMessage`), RE sources across 2.6/3.4.0/4.0.4, and the phased roadmap. | 2.6 + 3.4.0 + 4.0.4 | current — plan, build pending |
 
 To rebuild any of these from source: the HTML lives in this session's scratchpad only (per-session), but
 each artifact is self-contained — `WebFetch` the URL to recover its full HTML, or redeploy a fresh edit to
@@ -22,3 +23,7 @@ the same URL via the `Artifact` tool's `url=` param.
 
 Companion docs (already in-repo, so already cross-conversation): [PLANNER-PLAN.md](PLANNER-PLAN.md),
 [DRIVING-PARITY.md](DRIVING-PARITY.md).
+
+**Multiplayer (Phase 12):** the *Multiplayer build plan* artifact above is the root spec. As MP is built, each
+net-new screen (MP hub / host-join, host-discovery list, lobby slot-board, connection/latency + emote overlay)
+gets its own design artifact via `/artifact-design` and is appended to the table here.

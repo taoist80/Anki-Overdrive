@@ -46,6 +46,8 @@ import dev.overdrive.ui.screens.MatchSetupScreen
 import dev.overdrive.ui.screens.MissionDetailScreen
 import dev.overdrive.ui.screens.MissionSelectScreen
 import dev.overdrive.ui.screens.MultiplayerScreen
+import dev.overdrive.ui.screens.MpJoinScreen
+import dev.overdrive.ui.screens.MpLobbyScreen
 import dev.overdrive.ui.screens.NotificationPromptScreen
 import dev.overdrive.ui.screens.PlayerSelectScreen
 import dev.overdrive.ui.screens.ProfileHomeScreen
@@ -177,7 +179,11 @@ fun OverdriveNavHost(nav: OverdriveNav) {
         // ---- 4.0.4 main-menu hubs ----
         composable<Routes.SinglePlayer> { SinglePlayerScreen(nav) }
         composable<Routes.Extras> { ExtrasScreen(nav) }
+
+        // ---- Multiplayer (Phase 12 — local Wi-Fi: hub → host/join → shared lobby) ----
         composable<Routes.Multiplayer> { MultiplayerScreen(nav) }
+        composable<Routes.MpJoin> { MpJoinScreen(nav) }
+        composable<Routes.MpLobby> { MpLobbyScreen(nav) }
 
         // ---- Top-level singletons ----
         composable<Routes.CoinShop> { CoinShopScreen(nav) }

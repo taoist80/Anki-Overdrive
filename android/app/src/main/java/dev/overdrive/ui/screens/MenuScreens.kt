@@ -81,33 +81,7 @@ fun ExtrasScreen(nav: OverdriveNav) {
     }
 }
 
-/** Multiplayer: themed placeholder until the Phase 12 lobby ships. */
-@Composable
-fun MultiplayerScreen(nav: OverdriveNav) {
-    val colors = OverdriveTheme.colors
-    val font = OverdriveTheme.font
-    OverdriveScaffold(title = "Multiplayer", onBack = { nav.back() }) { mod ->
-        Column(
-            mod,
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            RacingName("MultiPlayer", fontSize = 40)
-            Spacer(Modifier.height(16.dp))
-            Text(
-                "COMING SOON", fontFamily = font, color = colors.blue, fontSize = 18.sp,
-                letterSpacing = 4.sp, fontWeight = FontWeight.Bold,
-            )
-            Spacer(Modifier.height(12.dp))
-            Text(
-                "Race head-to-head across devices — each phone drives its own cars on the same track. " +
-                    "Landing in a future update.",
-                fontFamily = font, color = colors.textDim, fontSize = 14.sp, textAlign = TextAlign.Center,
-                modifier = Modifier.widthIn(max = 440.dp),
-            )
-        }
-    }
-}
+// MultiplayerScreen now lives in MultiplayerScreens.kt (Phase 12 — host/join + lobby).
 
 // ---- building blocks --------------------------------------------------------
 
