@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.zIndex
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -80,6 +81,8 @@ import dev.overdrive.ui.components.OverdriveBackground
 import dev.overdrive.ui.components.OverdrivePanel
 import dev.overdrive.ui.components.OverdriveScaffold
 import dev.overdrive.ui.components.PrimaryButton
+import dev.overdrive.ui.components.CoinPill
+import dev.overdrive.profile.ProfileRepository
 import dev.overdrive.ui.components.StarRow
 import dev.overdrive.ui.components.WireframeScreen
 import dev.overdrive.ui.theme.OverdriveTheme
@@ -414,7 +417,7 @@ fun InRaceHudScreen(nav: OverdriveNav) {
     val st = engine.state
     val player = st.cars.firstOrNull { it.isPlayer }
     val rank = st.standings.indexOfFirst { it.isPlayer }.let { if (it >= 0) it + 1 else 1 }
-    var throttle by remember { mutableFloatStateOf(0.55f) }  // ~495 mm/s of 900 max — safe-cornering default
+    var throttle by remember { mutableFloatStateOf(0.62f) }  // ~560 mm/s of 900 max — lively but safe-cornering default
 
     // Race over (a car reached the lap target) -> victory flourish, then results.
     LaunchedEffect(st.finished) { if (st.finished) nav.go(Routes.GameOver) }
@@ -430,6 +433,37 @@ fun InRaceHudScreen(nav: OverdriveNav) {
 
     Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF16213A), Color(0xFF0A0D13))))) {
         if (overlay != null) Image(overlay, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alpha = 0.10f)
+
+        // 2.6 "Vehicle Disconnected" pause: the engine holds every car while the player's link is down;
+        // this modal (borrowed from 2.6's gamepad.alert pattern) covers the HUD until it reconnects,
+        // with the same quit-or-resume choice (resume here is automatic on reconnect).
+        if (!st.playerConnected) {
+            Box(
+                Modifier.fillMaxSize().zIndex(10f).background(Color(0xCC0A0610)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(
+                    Modifier.widthIn(max = 460.dp).clip(RoundedCornerShape(16.dp)).background(colors.panel)
+                        .border(1.dp, colors.danger.copy(alpha = 0.6f), RoundedCornerShape(16.dp)).padding(28.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text("VEHICLE DISCONNECTED", fontFamily = font, color = colors.danger, fontSize = 20.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        "Your Supercar lost its link. Reseat it on the charger to wake it up — the race is paused and resumes automatically once it reconnects (can take a few seconds).",
+                        fontFamily = font, color = colors.textDim, fontSize = 13.sp, textAlign = TextAlign.Center,
+                    )
+                    Spacer(Modifier.height(20.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        Text("RECONNECTING…", fontFamily = font, color = colors.blue, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                        Box(
+                            Modifier.clip(RoundedCornerShape(10.dp)).background(colors.danger)
+                                .clickable { engine.stop(); nav.go(Routes.GameOver) }.padding(horizontal = 22.dp, vertical = 10.dp),
+                        ) { Text("QUIT MATCH", color = Color.White, fontFamily = font, fontWeight = FontWeight.Bold, fontSize = 13.sp, letterSpacing = 1.sp) }
+                    }
+                }
+            }
+        }
 
         // TOP: full-width Health bar (combat modes only) — the 4.0.4 Health TextureProgressBar.
         if (hud != null) {
@@ -643,21 +677,34 @@ fun VictoryScreen(nav: OverdriveNav) {
                     fontSize = 46.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp,
                 )
                 Spacer(Modifier.height(8.dp))
-                Box(Modifier.size(240.dp), contentAlignment = Alignment.Center) {
-                    if (won && wreath != null) Image(wreath, null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
-                    Text(
-                        ordinal(place).uppercase(), fontFamily = font,
-                        color = if (won) Color(0xFF3A2A00) else colors.textPrimary,
-                        fontSize = 40.sp, fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(bottom = 34.dp),   // sit inside the medallion, above the ribbon
-                    )
-                }
-                if (opponentName != null) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        if (oppPortrait != null) Image(oppPortrait, opponentName, Modifier.size(44.dp).clip(RoundedCornerShape(percent = 50)), contentScale = ContentScale.Crop)
-                        Text("${if (won) "DEFEATED" else "BEATEN BY"}  ·  ${opponentName.uppercase()}",
-                            fontFamily = font, color = colors.textDim, fontSize = 13.sp, letterSpacing = 1.sp)
+                if (won) {
+                    // gold laurel wreath with the finishing place
+                    Box(Modifier.size(240.dp), contentAlignment = Alignment.Center) {
+                        if (wreath != null) Image(wreath, null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+                        Text(ordinal(place).uppercase(), fontFamily = font, color = Color(0xFF3A2A00),
+                            fontSize = 40.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 34.dp))
                     }
+                    if (opponentName != null) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            if (oppPortrait != null) Image(oppPortrait, opponentName, Modifier.size(44.dp).clip(RoundedCornerShape(percent = 50)), contentScale = ContentScale.Crop)
+                            Text("DEFEATED  ·  ${opponentName.uppercase()}", fontFamily = font, color = colors.textDim, fontSize = 13.sp, letterSpacing = 1.sp)
+                        }
+                    }
+                } else {
+                    // defeat: the victorious commander's real 2.6 portrait, framed, + your finishing place
+                    Box(
+                        Modifier.size(190.dp).clip(RoundedCornerShape(16.dp)).background(colors.danger.copy(alpha = 0.10f))
+                            .border(2.dp, colors.danger.copy(alpha = 0.55f), RoundedCornerShape(16.dp)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (oppPortrait != null) Image(oppPortrait, opponentName, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                        else Text(ordinal(place).uppercase(), fontFamily = font, color = colors.textPrimary, fontSize = 40.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        opponentName?.let { "BEATEN BY  ·  ${it.uppercase()}" } ?: "YOU FINISHED ${ordinal(place).uppercase()}",
+                        fontFamily = font, color = colors.textDim, fontSize = 13.sp, letterSpacing = 1.sp,
+                    )
                 }
                 Spacer(Modifier.height(28.dp))
                 PrimaryButton("Continue", { nav.go(Routes.RaceResults()) }, Modifier.widthIn(min = 220.dp), ButtonAccent.Gold)
@@ -680,16 +727,35 @@ fun RaceResultsScreen(nav: OverdriveNav, campaignMissionId: String) {
     val summary = remember(missionId) {
         if (isCampaign) CampaignEngine.completeMission(ctx, missionId, engine.state) else null
     }
+    val profile = ProfileRepository.profile                                  // observe coin balance
+    val won = standings.firstOrNull()?.isPlayer == true
+    val playerVehicle = standings.firstOrNull { it.isPlayer }?.let { carName(it.modelId, it.name) }
+    // Loot is earned by WINNING (2.6: "win races to earn Loot Crates"). Roll once; auto-open the reveal,
+    // which credits the coins + item to the profile on dismiss. Shown exactly once (no manual re-open to
+    // avoid double-crediting).
+    val loot = remember(missionId, won) { if (won) MetaGame.rollLoot(playerVehicle) else null }
+    LaunchedEffect(loot) {
+        if (loot != null) {
+            delay(800)
+            nav.showOverlay(Overlay.LootReveal(loot.coins, loot.itemId, loot.itemName, loot.rarity, loot.rarityColor, loot.badge))
+        }
+    }
 
     OverdriveScaffold(
         title = when {
-            !isCampaign -> "Results"
+            !isCampaign -> if (won) "Victory" else "Results"
             summary?.won == true -> "Mission Complete"
             else -> "Mission Failed"
         },
         onBack = { nav.back() }, heroImage = null,
+        right = { CoinPill(profile.coins, font) },
     ) { mod ->
         Column(mod.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(
+                if (won) "🎁  LOOT CRATE EARNED" else "DEFEATED  ·  no reward — try again",
+                fontFamily = font, color = if (won) colors.gold else colors.textDim,
+                fontSize = 14.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp,
+            )
             if (summary != null) {
                 OverdrivePanel(Modifier.fillMaxWidth()) { inner ->
                     Column(inner, horizontalAlignment = Alignment.CenterHorizontally) {
@@ -719,11 +785,6 @@ fun RaceResultsScreen(nav: OverdriveNav, campaignMissionId: String) {
             }
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                PrimaryButton("Open Loot", {
-                    val playerVehicle = engine.state.cars.firstOrNull { it.isPlayer }?.let { carName(it.modelId, it.name) }
-                    val r = MetaGame.rollLoot(playerVehicle)   // car-eligible loot when we know the player's car
-                    nav.showOverlay(Overlay.LootReveal(r.coins, r.itemId, r.itemName, r.rarity, r.rarityColor, r.badge))
-                }, Modifier.weight(1f), ButtonAccent.Gold)
                 if (isCampaign) PrimaryButton("Next Mission", { nav.go(Routes.CampaignGraph) }, Modifier.weight(1f), ButtonAccent.Blue)
                 else PrimaryButton("Rematch", { nav.go(Routes.MatchSetup()) }, Modifier.weight(1f), ButtonAccent.Outline)
                 PrimaryButton("Home", { nav.home() }, Modifier.weight(1f), ButtonAccent.Outline)
