@@ -65,6 +65,25 @@ a **track model**, **state estimation**, and the **planner**.
   the player a full planner *goal* (firmware-style assist) is an optional later refinement.
 - Verification: each phase needs on-track runs (cars). Keep the current build playable throughout.
 
+## Regenerating the 2.6 spec data (scratchpad is per-session — a fresh chat re-extracts from the repo's xapk)
+```sh
+X="DDL Overdrive 2.6.10.xapk"; W=/tmp/od26; mkdir -p $W
+unzip -o -j "$X" "DDL Overdrive 2.6 2.6.10.apk" -d $W
+APK="$W/DDL Overdrive 2.6 2.6.10.apk"
+# config spec (planner params, plan modes, FSM/traits, road-piece geometry):
+unzip -o "$X" "Android/obb/com.digitaldreamlabs.retrodrive/main.22*.obb" -d $W
+unzip -o "$W"/Android/obb/com.digitaldreamlabs.retrodrive/main.22*.obb \
+  "assets/rams/overdrive/basestation/config/*" -d $W/cfg   # -> core/*.cfg, aiConfigData/aic_*.json, modularRoadPieceDefinitionFiles/
+# native driving engine (symbols, NOT stripped) for Phase 2 algorithm study:
+unzip -o -j "$APK" "lib/arm64-v8a/libDriveEngine.so" -d $W
+nm -D $W/libDriveEngine.so | awk '{print $NF}' | c++filt > $W/driveengine_syms.txt   # grep LocalPlanner/RoadNetwork/...
+# optional: Ghidra (/usr/local/Cellar/ghidra) to decompile LocalPlanner::Planner functions for the search.
+# C# layer (orchestration): Il2CppDumper-net6 on lib/arm64-v8a/libil2cpp.so + assets/bin/Data/Managed/Metadata/global-metadata.dat
+```
+Key files: `core/localPlannerParams.cfg`, `aiConfigData/aic_parameters.json` (`curveLimitFrictionConstant 0.87`,
+`epsilonSchedule`, `laneOffsetsToConsider`), `aic_commander_planner.json` (plan modes), `aic_commander_{fsm,high_level_ai}.json`
+(traits), `modularRoadPieceDefinitionFiles/racing/*.txt` (per-piece geometry → port to `assets/gamedata/roadPieceGeometry.json`).
+
 ## Recommended start
 **Phase 0 + 1** — track model, state estimation, and per-piece curve clamping with look-ahead. That alone
 should fix the fly-offs properly (vs today's reactive cap), and it's the substrate the planner needs.
