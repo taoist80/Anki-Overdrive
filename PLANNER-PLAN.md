@@ -42,20 +42,41 @@ a **track model**, **state estimation**, and the **planner**.
   `planner.plan(car) → drive(speed) + changeLane(lane)`.
 
 ## Phases (each shippable; early ones fix stability before the hard search)
-- **Phase 0 — Track model + state estimation.** Port the piece-geometry table; build `RoadNetwork` from
-  the scan; add `VehicleStateEstimator` (dead-reckoning + localization correction). *Deliverable:*
-  continuous car state + look-ahead. No behavior change yet.
-- **Phase 1 — Curve speed limiting (the stability fix).** Compute per-piece `maxSpeed` from curvature;
-  clamp every car (incl. the player's throttle) to the **upcoming** pieces' limits using look-ahead, so
-  cars brake *before* a curve. *Deliverable:* cars hold curves — the real fix for fly-offs. (Medium effort,
-  biggest payoff.)
-- **Phase 2 — Local planner (racing + lane modes).** The cost-based short-horizon search with
-  clearance/proximity collision avoidance; AI cars driven by it. Start greedy/short-horizon, then add the
-  epsilon-schedule search. *Deliverable:* AI drives racing lines + avoids contact. (The hard part.)
-- **Phase 3 — Battle plan-modes + behavior FSM.** Port the battle goal-regions (get-behind, side-by-side,
-  ahead, ram, evade) + the per-commander trait→mode FSM. *Deliverable:* AI commanders maneuver in combat.
+- **Phase 0 — Track model + state estimation. ✅ LANDED (branch phase9-hud).** Decoded the 2.6 piece
+  geometry files (line1=arc length m, line2=signed radius m / 0=straight; lanes ±0.0855 m @0.009 m) and
+  bundled `assets/gamedata/roadPieceGeometry.json` (137 pieces, 69 curves; regen via the commands below).
+  `RoadPieceGeometry.kt` (table loader, replaces the old curve-id heuristic + deletes `RoadPieces.kt`),
+  `RoadNetwork.kt` (ordered ring built during the scan from the piece sequence; max-gap finish-pair to
+  dodge the finish re-trigger quirk; `lookAhead` + `curveSafeSpeed` backward-pass), `VehicleStateEstimator.kt`
+  (per-car ringIndex + dead-reckoned distAlongPiece; resync on 0x27 piece change). Builds clean.
+- **Phase 1 — Curve speed limiting (the stability fix). ✅ LANDED.** Per-piece cap = 2.6 parity
+  `v=sqrt(0.87·g·|R|)` × `CURVE_SPEED_SCALE` (RaceEngine), applied with **look-ahead**: `curveSafeCap` →
+  `estimator.curveSafeSpeed` clamps every car (incl. the player's throttle) so it brakes *before* a curve
+  (`LOOKAHEAD_DECEL`). Falls back to the current-piece cap if the ring isn't mapped. **Calibration decision:**
+  μ=0.87's absolute caps (sharpest ≈1034 mm/s) sit above where our cars empirically fly off (~450–600), so
+  `CURVE_SPEED_SCALE=0.45` lands the sharpest mapped curve ≈ the old known-safe 450 mm/s; gentler curves run
+  faster. `CURVE_SPEED_SCALE` + `LOOKAHEAD_DECEL` are the **primary on-track tuning knobs** (Phase 4).
+  *Still needs on-track validation runs (cars).*
+- **Phase 2 — Local planner (racing + lane modes). ✅ LANDED (faithful-structure).** RE'd the real 2.6
+  planner (ARA* over (PLID,lane,speedIdx); see [PLANNER-ALGORITHM.md]) then ported `PlanMode.kt` +
+  `LocalPlanner.kt`: weighted-A* over (step,lane,speedBin), g = travel-time + predicted-collision penalty
+  (the 2.6 `ComputeStateTransitionPenalty` clearances) + lane/speed-mismatch, h = remaining-time, curve
+  filtering per step, closed-set dedup, 240-expansion budget. `planAiCars()` drives each AI's speed+lane;
+  player stays on throttle. **Scan-mapping fix:** stage only after a full finish-to-finish lap so the ring
+  reliably maps (was: only mapped if a car started just before the finish → planner silently fell back).
+  *Needs on-track validation (lane-passing, weaving).*
+- **Phase 3 — Battle plan-modes + behavior FSM.** ◀ IN PROGRESS. Port the battle goal-regions (get-behind,
+  side-by-side, ahead, ram, evade — `BattleMode::h` targets a `GoalRegionTable` region relative to the
+  target vehicle) + the per-commander trait→mode FSM. *Deliverable:* AI commanders maneuver in combat.
 - **Phase 4 — Tuning/parity.** Port the 2.6 params verbatim (clearances, penalties, friction, epsilon
   schedule); on-track tuning per difficulty.
+- **Phase 5 (post-driving) — Track-Scanning Parity.** Replace our roadPieceId-sequence ring with 2.6's
+  `TrackDetectGamePhase` approach (RE'd; see [[anki-26-track-scanning]]): use the 0x27 `locationId` (the
+  optical sub-piece code we currently ignore) as per-car `CodeEntry`s; assemble the track by longest-common-
+  substring overlap matching across **all** cars until loop closure (`DoesSegmentHaveLoopClosure`); track-
+  type prediction from a 6-piece signature; validate (gap/missing-piece errors) → **player confirm** step →
+  planner init; **cache the last scanned track** to skip re-scanning the same layout. Discovery speed
+  0.25→0.4 m/s (2.6 `kBS_DISCOVERY_*`). *User-requested; do after the driving logic is complete.*
 
 ## Scope / risk
 - Phases 0–1 are the **foundation + the stability win** and are moderate effort — recommended first; they

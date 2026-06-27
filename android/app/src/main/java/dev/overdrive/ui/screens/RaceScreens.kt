@@ -42,7 +42,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -70,7 +77,7 @@ import dev.overdrive.game.MetaGame
 import dev.overdrive.game.campaign.CampaignEngine
 import dev.overdrive.game.race.RaceEngineHolder
 import dev.overdrive.game.race.DriverProfile
-import dev.overdrive.game.race.RoadPieces
+import dev.overdrive.game.race.RoadPieceGeometry
 import dev.overdrive.nav.Overlay
 import dev.overdrive.nav.OverdriveNav
 import dev.overdrive.nav.Routes
@@ -325,7 +332,7 @@ fun TrackScanScreen(nav: OverdriveNav) {
     val colors = OverdriveTheme.colors
     val font = OverdriveTheme.font
     val engine = remember { RaceEngineHolder.engine }
-    remember { RoadPieces.load(ctx); 0 }     // curve map must be ready before driving
+    remember { RoadPieceGeometry.load(ctx); 0 }     // piece geometry must be ready before driving
     LaunchedEffect(Unit) { engine.startScan() }
     val st = engine.state
 
@@ -341,7 +348,18 @@ fun TrackScanScreen(nav: OverdriveNav) {
             Text(if (st.scanComplete) "Every car has mapped a full lap."
                  else "Cars are driving a slow lap to map the track — keep them on the track.",
                 fontFamily = font, color = colors.textDim, fontSize = 13.sp)
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(16.dp))
+            // Live track view: the discovered pieces drawn from their real geometry, growing as the scan
+            // maps them and closing into a loop when complete.
+            if (st.discoveredTrack.size >= 2) {
+                TrackMapView(st.discoveredTrack, st.scanComplete,
+                    Modifier.fillMaxWidth().height(230.dp).padding(vertical = 4.dp))
+            } else {
+                Box(Modifier.fillMaxWidth().height(230.dp), contentAlignment = Alignment.Center) {
+                    Text("Place cars on the track to begin mapping…", fontFamily = font, color = colors.textDim, fontSize = 12.sp)
+                }
+            }
+            Spacer(Modifier.height(16.dp))
             st.cars.forEach { c ->
                 Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("${if (c.isPlayer) "▸ " else ""}${carName(c.modelId, c.name)}",
@@ -370,7 +388,7 @@ fun CountdownScreen(nav: OverdriveNav) {
     val colors = OverdriveTheme.colors
     val font = OverdriveTheme.font
     val engine = remember { RaceEngineHolder.engine }
-    remember { RoadPieces.load(ctx); 0 }   // ensure curve map is ready before driving
+    remember { RoadPieceGeometry.load(ctx); 0 }   // ensure piece geometry is ready before driving
 
     // 4.0.4 behaviour: an automatic 3·2·1·GO countdown — the race starts on GO with no button press.
     // n: 3,2,1 then 0 = GO. engine.start() fires on GO, then we cross-fade into the HUD.
@@ -661,7 +679,6 @@ fun VictoryScreen(nav: OverdriveNav) {
     val oppPortrait = rememberAsset(
         opponentName?.let { nm -> ContentRepository.commanders26ById.values.firstOrNull { it.name.equals(nm, true) }?.portraitAsset },
     )
-    val wreath = rememberAsset("ui/ui_results_wreath_gold.png")
     val p = remember { Animatable(0f) }
     LaunchedEffect(Unit) { p.animateTo(1f, tween(560)) }
 
@@ -677,34 +694,15 @@ fun VictoryScreen(nav: OverdriveNav) {
                     fontSize = 46.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp,
                 )
                 Spacer(Modifier.height(8.dp))
-                if (won) {
-                    // gold laurel wreath with the finishing place
-                    Box(Modifier.size(240.dp), contentAlignment = Alignment.Center) {
-                        if (wreath != null) Image(wreath, null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
-                        Text(ordinal(place).uppercase(), fontFamily = font, color = Color(0xFF3A2A00),
-                            fontSize = 40.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 34.dp))
+                // real 3.4.0 results medallion (place in the glossy circle); greyed on a loss
+                ResultsMedallion(place, won)
+                if (opponentName != null) {
+                    Spacer(Modifier.height(6.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        if (oppPortrait != null) Image(oppPortrait, opponentName, Modifier.size(44.dp).clip(RoundedCornerShape(percent = 50)), contentScale = ContentScale.Crop)
+                        Text((if (won) "DEFEATED  ·  " else "BEATEN BY  ·  ") + opponentName.uppercase(),
+                            fontFamily = font, color = colors.textDim, fontSize = 13.sp, letterSpacing = 1.sp)
                     }
-                    if (opponentName != null) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            if (oppPortrait != null) Image(oppPortrait, opponentName, Modifier.size(44.dp).clip(RoundedCornerShape(percent = 50)), contentScale = ContentScale.Crop)
-                            Text("DEFEATED  ·  ${opponentName.uppercase()}", fontFamily = font, color = colors.textDim, fontSize = 13.sp, letterSpacing = 1.sp)
-                        }
-                    }
-                } else {
-                    // defeat: the victorious commander's real 2.6 portrait, framed, + your finishing place
-                    Box(
-                        Modifier.size(190.dp).clip(RoundedCornerShape(16.dp)).background(colors.danger.copy(alpha = 0.10f))
-                            .border(2.dp, colors.danger.copy(alpha = 0.55f), RoundedCornerShape(16.dp)),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        if (oppPortrait != null) Image(oppPortrait, opponentName, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-                        else Text(ordinal(place).uppercase(), fontFamily = font, color = colors.textPrimary, fontSize = 40.sp, fontWeight = FontWeight.Bold)
-                    }
-                    Spacer(Modifier.height(10.dp))
-                    Text(
-                        opponentName?.let { "BEATEN BY  ·  ${it.uppercase()}" } ?: "YOU FINISHED ${ordinal(place).uppercase()}",
-                        fontFamily = font, color = colors.textDim, fontSize = 13.sp, letterSpacing = 1.sp,
-                    )
                 }
                 Spacer(Modifier.height(28.dp))
                 PrimaryButton("Continue", { nav.go(Routes.RaceResults()) }, Modifier.widthIn(min = 220.dp), ButtonAccent.Gold)
@@ -750,7 +748,10 @@ fun RaceResultsScreen(nav: OverdriveNav, campaignMissionId: String) {
         onBack = { nav.back() }, heroImage = null,
         right = { CoinPill(profile.coins, font) },
     ) { mod ->
-        Column(mod.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        val playerPlace = standings.indexOfFirst { it.isPlayer }.let { if (it >= 0) it + 1 else 1 }
+        Column(mod.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            // real 3.4.0 results medallion header (greyed on a loss) — the standings screen's hero
+            ResultsMedallion(playerPlace, won)
             Text(
                 if (won) "🎁  LOOT CRATE EARNED" else "DEFEATED  ·  no reward — try again",
                 fontFamily = font, color = if (won) colors.gold else colors.textDim,
@@ -777,7 +778,10 @@ fun RaceResultsScreen(nav: OverdriveNav, campaignMissionId: String) {
                 standings.forEachIndexed { i, c ->
                     OverdrivePanel(Modifier.fillMaxWidth()) { inner ->
                         Row(inner.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text("${ordinal(i + 1)}   ${if (c.isPlayer) "▸ " else ""}${carName(c.modelId, c.name)}", fontFamily = font, color = if (c.isPlayer) colors.gold else colors.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                CarThumb(c.modelId)
+                                Text("${ordinal(i + 1)}   ${if (c.isPlayer) "▸ " else ""}${carName(c.modelId, c.name)}", fontFamily = font, color = if (c.isPlayer) colors.gold else colors.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                            }
                             Text("${c.laps} laps · ${c.transitions} seg", fontFamily = font, color = colors.textDim, fontSize = 12.sp)
                         }
                     }
@@ -790,6 +794,105 @@ fun RaceResultsScreen(nav: OverdriveNav, campaignMissionId: String) {
                 PrimaryButton("Home", { nav.home() }, Modifier.weight(1f), ButtonAccent.Outline)
             }
         }
+    }
+}
+
+/** One placed track tile: grid cell + which sprite + rotation (4.0.4 `TrackScanningMap` model). */
+private data class TrackTile(val cellX: Int, val cellY: Int, val sprite: String, val rotDeg: Float)
+
+/**
+ * Assemble the discovered pieces into a tile grid exactly like 4.0.4's `TrackScanningMap.gd`: walk the
+ * piece sequence on an orthogonal grid (one 256² tile per piece), every curve turning the heading 90°,
+ * placing the matching sprite rotated by the heading. This is a schematic, not a metric map — 4.0.4 itself
+ * warns "Visual Aid may not reflect the track" — but it's the authentic look. Maps our pieces to 4.0.4's
+ * piece chars: finish piece → 'G' (start), straight → 'S', curve → 'L'/'R' by radius sign.
+ */
+private fun assembleTrackTiles(pieces: List<Int>): Pair<List<TrackTile>, IntArray> {
+    if (pieces.isEmpty()) return emptyList<TrackTile>() to intArrayOf(0, 0, 0, 0)
+    val startIdx = pieces.indexOf(33).let { if (it >= 0) it else 0 }       // anchor on the start/finish piece
+    val seq = pieces.drop(startIdx) + pieces.take(startIdx)
+    val chars = seq.mapIndexed { i, pid ->
+        when {
+            i == 0 -> 'G'
+            !RoadPieceGeometry.isCurve(pid) -> 'S'
+            (RoadPieceGeometry.of(pid)?.radiusMm ?: 0) >= 0 -> 'L'
+            else -> 'R'
+        }
+    }
+    var cx = 0; var cy = 0; var dx = 1; var dy = 0
+    var minX = 0; var maxX = 0; var minY = 0; var maxY = 0
+    val out = ArrayList<TrackTile>()
+    for (c in chars) {
+        val x1 = cx + dx; val y1 = cy + dy
+        // rotation index (0-3) by heading, per 4.0.4 rebuild_track_pieces
+        val rot = when (c) {
+            'L' -> if (dy == 0 && dx == 1) 3 else if (dy == 0 && dx == -1) 1 else if (dx == 0 && dy == 1) 0 else 2
+            'R' -> if (dy == 0 && dx == 1) 0 else if (dy == 0 && dx == -1) 2 else if (dx == 0 && dy == 1) 1 else 3
+            else -> if (dy == 0 && dx == 1) 0 else if (dy == 0 && dx == -1) 2 else if (dx == 0 && dy == 1) 1 else 3
+        }
+        val (sprite, rotDeg) = when (c) {
+            'G' -> "ui/track/track-piece-start.png" to floatArrayOf(0f, 270f, 180f, 90f)[rot]
+            'S' -> "ui/track/track-piece-straight.png" to floatArrayOf(0f, 270f, 180f, 90f)[rot]
+            else -> "ui/track/track-piece-left.png" to floatArrayOf(0f, 90f, 180f, 270f)[rot]   // L/R share the curve sprite
+        }
+        out.add(TrackTile(x1, y1, sprite, rotDeg))
+        cx = x1; cy = y1
+        minX = minOf(minX, cx); maxX = maxOf(maxX, cx); minY = minOf(minY, cy); maxY = maxOf(maxY, cy)
+        when (c) {   // turn the heading 90° (4.0.4 L/R direction tables)
+            'R' -> if (dx == 1 && dy == 0) { dy = -1; dx = 0 } else if (dx == -1 && dy == 0) { dy = 1; dx = 0 } else if (dx == 0 && dy == 1) { dy = 0; dx = 1 } else { dy = 0; dx = -1 }
+            'L' -> if (dx == 1 && dy == 0) { dy = 1; dx = 0 } else if (dx == -1 && dy == 0) { dy = -1; dx = 0 } else if (dx == 0 && dy == 1) { dy = 0; dx = -1 } else { dy = 0; dx = 1 }
+        }
+    }
+    return out to intArrayOf(minX, maxX, minY, maxY)
+}
+
+/** Top-down track view, assembled from the real 4.0.4 piece sprites on a tile grid (grows as pieces map). */
+@Composable
+private fun TrackMapView(pieces: List<Int>, mapped: Boolean, modifier: Modifier = Modifier) {
+    val (tiles, b) = remember(pieces) { assembleTrackTiles(pieces) }
+    val straight = rememberAsset("ui/track/track-piece-straight.png")
+    val start = rememberAsset("ui/track/track-piece-start.png")
+    val curve = rememberAsset("ui/track/track-piece-left.png")
+    Canvas(modifier) {
+        if (tiles.isEmpty()) return@Canvas
+        val gw = (b[1] - b[0] + 1); val gh = (b[3] - b[2] + 1)
+        val cell = kotlin.math.min(size.width / (gw + 0.6f), size.height / (gh + 0.6f))
+        val ox = (size.width - cell * gw) / 2f; val oy = (size.height - cell * gh) / 2f
+        for (t in tiles) {
+            val img = when {
+                t.sprite.contains("start") -> start
+                t.sprite.contains("left") -> curve
+                else -> straight
+            } ?: continue
+            val px = ox + (t.cellX - b[0]) * cell + cell / 2f
+            val py = oy + (t.cellY - b[2]) * cell + cell / 2f
+            rotate(t.rotDeg, Offset(px, py)) {
+                drawImage(img,
+                    dstOffset = IntOffset((px - cell / 2f).toInt(), (py - cell / 2f).toInt()),
+                    dstSize = IntSize(cell.toInt(), cell.toInt()))
+            }
+        }
+    }
+}
+
+/**
+ * The shared end-screen medallion (real 3.4.0 `UI_ResultsWreathBanner`): the finishing [place] in the
+ * glossy circle, "VICTORY"/"FINISHED" on the ribbon. Greyed (desaturated) on a loss so it never reads as
+ * a win. Used by both the [VictoryScreen] flourish and the [RaceResultsScreen] standings header.
+ */
+@Composable
+private fun ResultsMedallion(place: Int, won: Boolean, modifier: Modifier = Modifier) {
+    val font = OverdriveTheme.font
+    val banner = rememberAsset("ui/ui_results_banner.png")
+    val filter = if (won) null else ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0f) })
+    Box(modifier.width(300.dp).height(243.dp), contentAlignment = Alignment.Center) {
+        if (banner != null) Image(banner, null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit, colorFilter = filter)
+        Text(ordinal(place).uppercase(), fontFamily = font, color = Color.White,
+            fontSize = 50.sp, fontWeight = FontWeight.Bold,
+            modifier = Modifier.align(Alignment.Center).padding(bottom = 48.dp))
+        Text(if (won) "VICTORY" else "FINISHED", fontFamily = font, color = Color(0xFF09384A),
+            fontSize = 15.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp,
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 34.dp))
     }
 }
 

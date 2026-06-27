@@ -63,6 +63,7 @@ class Combat {
         var selfSlowMul = 1f
         var lastAiFireAt = 0L
         var lastUseAt = 0L                          // last time any bay drained energy (gates passive regen)
+        var lastHitAt = 0L                          // last time this car took damage (AI reactive support)
         var profile: DriverProfile? = null          // AI driver stats (campaign opponent commander); null = generic
         val equipped = HashMap<Bay, String>()      // bay -> itemId
         val readyAt = HashMap<Bay, Long>()         // bay -> cooldown/overheat-until ms
@@ -350,7 +351,7 @@ class Combat {
         if (from.isPlayer) dmg *= playerMods.damageMult                  // player's WEAPONS upgrade
         if (now < t.shieldUntil) dmg *= (1f - t.shieldBlock)             // real shield block %
         if (t.isPlayer) dmg *= playerMods.defenseMult                    // player's DEFENSE upgrade (incoming)
-        if (dmg > 0f) t.health -= dmg
+        if (dmg > 0f) { t.health -= dmg; t.lastHitAt = now }
         // status effects (tractor carries its real speed ratio; others use their effect defaults)
         for (effId in effectsOf(item)) {
             val eff = ItemRepository.effect(effId) ?: continue
@@ -433,8 +434,13 @@ class Combat {
                 val prof = c.profile ?: DriverProfile.DEFAULT
                 if (prof.weaponsOn && now - c.lastAiFireAt >= prof.fireCooldownMs && c.energy > MAX_ENERGY * 0.4f) {
                     c.lastAiFireAt = now
-                    val bay = if (prof.defensive && c.energy > MAX_ENERGY * 0.7f) Bay.SUPPORT else Bay.ATTACK
-                    fire(c.address, bay, telemetry)
+                    // Situational item choice (2.6 `equip_best_support_item`): pop SUPPORT (shield/boost) when
+                    // hurt or freshly hit — any trait reacts defensively — or when a defensive commander is
+                    // flush with energy; otherwise attack. Falls back to attack if no support is equipped.
+                    val hurtOrHit = c.health < MAX_HEALTH * 0.45f || now - c.lastHitAt < 2500L
+                    val useSupport = c.equipped[Bay.SUPPORT] != null &&
+                        (hurtOrHit || (prof.defensive && c.energy > MAX_ENERGY * 0.7f))
+                    fire(c.address, if (useSupport) Bay.SUPPORT else Bay.ATTACK, telemetry)
                 }
             }
         }

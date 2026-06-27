@@ -48,6 +48,7 @@ data class RaceState(
     val lapTarget: Int = 3,              // laps to finish (RACE/BATTLE-RACE); 0 = endless (battle/koth)
     val finished: Boolean = false,       // the race has ended (a car reached lapTarget)
     val playerConnected: Boolean = true, // false when the player's car has dropped its BLE link (reconnecting)
+    val discoveredTrack: List<Int> = emptyList(),  // ordered piece ids mapped so far (drives the scan-screen track view)
 ) {
     /** Standings: most laps, then most segment transitions (track-progress tiebreaker). */
     val standings: List<CarTelemetry>
@@ -60,9 +61,10 @@ data class RaceState(
  * HUD; other connected cars run a simple varied-speed AI.
  *
  * Robustness: each car's target speed is re-sent on a control loop (BLE writes-without-response can
- * drop). Curve safety: speed is auto-capped to [CURVE_SPEED] whenever a car is on a curve piece
- * (classified offline in [RoadPieces]) — this lets full throttle be fast on straights without
- * fishtailing on bends. Laps: counted per car when it returns to the piece it started the race on.
+ * drop). Curve safety (Phase 1): a per-piece speed cap from real 2.6 geometry ([RoadPieceGeometry]) is
+ * applied with **look-ahead** — using the scanned track ([RoadNetwork]) and each car's estimated state
+ * ([VehicleStateEstimator]), cars brake *before* a curve to the speed it can be taken at, instead of
+ * reacting once already on it. Laps: counted per car when it returns to the piece it started the race on.
  */
 class RaceEngine(private val mgr: CarManager) {
 
@@ -70,7 +72,13 @@ class RaceEngine(private val mgr: CarManager) {
         private const val TAG = "OverdriveX"
         const val MAX_SPEED = 900       // mm/s at full throttle (curves auto-cap below)
         const val SPEED_CEIL = 1000     // hard straight-line ceiling incl. SPEED upgrade (hardware-safe)
-        const val CURVE_SPEED = 450     // mm/s ceiling while on a curve piece
+        // Phase 1 curve safety: per-piece caps come from [RoadPieceGeometry] (2.6 parity
+        // v=sqrt(0.87·g·R)). CURVE_SPEED_SCALE calibrates that theoretical lateral-grip ceiling to our
+        // hardware so the sharpest mapped curve lands near the old known-safe 450 mm/s; gentler curves run
+        // faster. LOOKAHEAD_DECEL is the braking rate the look-ahead assumes so cars slow *before* a curve
+        // (kept ≤ ACCEL so the car can always meet the profile). Both are the primary Phase-4 tuning knobs.
+        const val CURVE_SPEED_SCALE = 0.45f   // ×2.6 parity curve cap (sharpest ≈ 465 mm/s)
+        const val LOOKAHEAD_DECEL = 600f      // mm/s² assumed for pre-curve braking
         const val HOLD_DT_S = 0.08f     // weapon charge tick (matches the HUD's ~80ms hold loop)
         const val PLAYER_START = 500    // mm/s default when the race starts
         const val AI_BASE = 600         // mm/s base for AI rivals, ×tier profile. (Lower than 4.0.4's ~1000 bots
@@ -111,16 +119,30 @@ class RaceEngine(private val mgr: CarManager) {
     private val lapStartSeg = HashMap<String, Int>()  // each car's segment-count at its last lap boundary
     private val lastUTurnAt = HashMap<String, Long>()  // debounce wrong-way u-turns per car
     private var segsPerLap = 0                // segments in one physical lap, measured during the scan
+    private val roadNetwork = RoadNetwork()                       // ordered ring of pieces, built during the scan
+    private val estimator = VehicleStateEstimator(roadNetwork)    // per-car continuous state for look-ahead
+    private val planner = LocalPlanner(roadNetwork, estimator)    // Phase 2: cost-based A* that drives the AI cars
+    private val planModes = HashMap<String, PlanMode>()           // per-AI-car plan mode (racing / lane / battle)
+    private val battleAi = HashSet<String>()                      // armed AIs whose mode the combat FSM picks each tick
+    private val aiTopSpeed = HashMap<String, Int>()               // per-AI-car top speed the planner may pick (mm/s)
+    private val scanSeq = HashMap<String, ArrayList<Int>>()       // each car's ordered piece ids during the scan
+    private val scanFp = HashMap<String, ArrayList<Long>>()       // each car's ordered piece fingerprints (pieceId<<8|locationId) for loop closure
+    private var discoveredTrack: List<Int> = emptyList()          // ordered piece ids mapped so far (scan-screen track view)
     private var lapTarget = 3
     private var finished = false
+    private var winnerAddr: String? = null   // the car that actually reached the lap target first (authoritative)
     private var opponentProfile: DriverProfile? = null          // campaign opponent commander's driver stats
     private val aiProfiles = HashMap<String, DriverProfile>()    // per-AI-car profile (assigned in arm)
     /** The Tournament mission this race belongs to ("" = Open Play); carried to the results screen. */
     var campaignMissionId: String = ""
     /** The opponent commander's display name (for the victory "DEFEATED: …"), null in Open Play. */
     val opponentName: String? get() = opponentProfile?.displayName
-    /** Did the player finish first? (used by the victory screen). */
-    val playerWon: Boolean get() = state.standings.firstOrNull()?.isPlayer == true
+    /**
+     * Did the player finish first? The winner is whoever actually reached the lap target first (captured
+     * in [finishRace]) — NOT recomputed from live standings, which can tie post-finish (a trailing car's
+     * lap may still register after the race ends) and wrongly credit the player.
+     */
+    val playerWon: Boolean get() = winnerAddr?.let { it == playerAddr } ?: (state.standings.firstOrNull()?.isPlayer == true)
 
     /** Set the laps-to-finish for the next race (from Match Setup). 0 = endless. */
     fun setLapTarget(n: Int) { lapTarget = n.coerceAtLeast(0) }
@@ -173,10 +195,13 @@ class RaceEngine(private val mgr: CarManager) {
         mgr.stopScan()             // free the BLE radio for driving
         scanning = true; scanComplete = false; finished = false; staged.clear()
         segsPerLap = 0; lapStartSeg.clear()
+        roadNetwork.clear(); estimator.clear(); scanSeq.clear(); scanFp.clear()   // rebuild the track ring fresh
+        discoveredTrack = emptyList()
         scanStartedAt = SystemClock.elapsedRealtime()
         tele.keys.forEach { addr ->
             targetSpeed[addr] = SCAN_SPEED
             lastPiece[addr] = -1; lapStartSeg[addr] = 0
+            scanSeq[addr] = ArrayList(); scanFp[addr] = ArrayList()
             tele[addr]?.let { tele[addr] = it.copy(laps = 0, transitions = 0) }
             mgr.setLaneOffset(addr, 0f)
         }
@@ -194,22 +219,34 @@ class RaceEngine(private val mgr: CarManager) {
     }
 
     /** First car to reach the lap target ends the race; stops everyone and flags [finished] for Results. */
-    private fun finishRace(winnerAddr: String) {
+    private fun finishRace(addr: String) {
         finished = true
-        Log.i(TAG, "Race.finish: ${tele[winnerAddr]?.name ?: winnerAddr} reached $lapTarget laps")
+        winnerAddr = addr   // authoritative winner — captured before any trailing car's lap can register
+        Log.i(TAG, "Race.finish: ${tele[addr]?.name ?: addr} reached $lapTarget laps")
         stop()   // stops cars + control loop; publish(running=false) carries finished=true
     }
 
     fun start() {
         arm(state.mode)   // re-snapshot: include any car that finished connecting after Match Setup
-        scanning = false; finished = false; mgr.stopScan()
+        scanning = false; finished = false; winnerAddr = null; mgr.stopScan()
+        estimator.clear()   // fresh dead-reckoning from the staged start; the scan-built ring is kept
+        Log.i(TAG, "Race.start: roadNetwork ${if (roadNetwork.ready) "READY (${roadNetwork.size} pieces) — look-ahead curve safety on" else "not mapped — per-piece curve cap only"}")
         startedAt = SystemClock.elapsedRealtime()
+        planModes.clear(); battleAi.clear(); aiTopSpeed.clear()
+        // RACE and TIME TRIAL are weapon-free; all other modes (battle/battle-race/one-shot/koth/takeover) arm weapons.
+        val weaponsEnabled = state.mode.lowercase().let { it != "race" && !it.startsWith("time") }
         var aiIdx = 0
         tele.keys.forEach { addr ->
             targetSpeed[addr] = if (addr == playerAddr) PLAYER_START else {
-                // AI base speed scaled by the car's commander profile (tier/level), plus a small spread.
-                val scale = (aiProfiles[addr] ?: DriverProfile.DEFAULT).speedScale
-                (AI_BASE * scale).toInt() + (aiIdx++ % 4) * AI_SPREAD
+                // AI top speed scaled by the car's commander profile (tier/level), plus a small spread. The
+                // planner picks each AI's actual speed/lane per tick up to this ceiling; assign its plan mode
+                // (racing / lane / battle) from the commander profile — battle only when weapons are armed.
+                val profile = aiProfiles[addr] ?: DriverProfile.DEFAULT
+                val top = (AI_BASE * profile.speedScale).toInt() + (aiIdx++ % 4) * AI_SPREAD
+                aiTopSpeed[addr] = top
+                planModes[addr] = PlanMode.forProfile(profile, weaponsEnabled)
+                if (PlanMode.isCombatant(profile, weaponsEnabled)) battleAi.add(addr)   // FSM drives its mode each tick
+                top
             }
             lastPiece[addr] = -1; lapStartSeg[addr] = 0   // count race laps fresh from the staged start line
             mgr.setLaneOffset(addr, 0f)
@@ -217,8 +254,6 @@ class RaceEngine(private val mgr: CarManager) {
         // Arm the virtual combat model: equip the player's saved loadout, AI rivals a default.
         val roster = tele.values.map { Triple(it.address, it.address == playerAddr, GameData.byModelId(it.modelId)?.name) }
         val playerCarId = tele[playerAddr]?.modelId ?: -1
-        // RACE and TIME TRIAL are weapon-free; all other modes (battle/battle-race/one-shot/koth/takeover) arm weapons.
-        val weaponsEnabled = state.mode.lowercase().let { it != "race" && !it.startsWith("time") }
         // Per-car garage upgrades → in-race multipliers (speed handled here, the rest by combat).
         val prof = ProfileRepository.profile
         fun lvl(track: String) = prof.upgradeLevel("$playerCarId:$track")
@@ -285,14 +320,75 @@ class RaceEngine(private val mgr: CarManager) {
     fun fireBay(bay: String) { playerAddr?.let { combat.release(it, bayOf(bay), tele.values); publish() } }
     private fun bayOf(bay: String) = when (bay) { "attack" -> Bay.ATTACK; "support" -> Bay.SUPPORT; else -> Bay.SPECIAL }
 
-    /** Curve-aware + combat-aware target: cap on curves, then scale by combat (boost/tractor/disabled). */
+    /** Curve-aware + combat-aware target: look-ahead curve cap, then scale by combat (boost/tractor/disabled). */
     private fun effectiveSpeed(addr: String, pieceId: Int): Int {
         if (combat.isDisabled(addr)) return 0
         val raw = targetSpeed[addr] ?: return 0
-        // Player's SPEED upgrade boosts straight-line speed only; curves stay hard-capped (hardware safety).
+        // Player's SPEED upgrade boosts straight-line speed only; curves stay capped (hardware safety).
         val base = if (addr == playerAddr) (raw * playerSpeedMult).toInt() else raw
-        val capped = if (RoadPieces.isCurve(pieceId)) minOf(base, CURVE_SPEED) else minOf(base, SPEED_CEIL)
-        return (capped * combat.speedFactor(addr)).toInt()
+        return (minOf(base, curveSafeCap(addr, pieceId)) * combat.speedFactor(addr)).toInt()
+    }
+
+    /**
+     * Curve-safe ceiling (mm/s). When the track ring is mapped, this is the look-ahead clamp over the
+     * upcoming pieces (brake before a curve, [VehicleStateEstimator.curveSafeSpeed]); otherwise it falls
+     * back to the current piece's own cap. Replaces the old reactive flat curve cap.
+     */
+    private fun curveSafeCap(addr: String, pieceId: Int): Int =
+        if (roadNetwork.ready) estimator.curveSafeSpeed(addr, LOOKAHEAD_DECEL, SPEED_CEIL, ::pieceCap)
+        else pieceCap(pieceId)
+
+    /** Effective cap for a single piece: the 2.6 parity curve cap scaled to our hardware, else [SPEED_CEIL]. */
+    private fun pieceCap(pieceId: Int): Int {
+        val raw = RoadPieceGeometry.rawCurveCapMmps(pieceId)
+        return if (raw <= 0) SPEED_CEIL else (raw * CURVE_SPEED_SCALE).toInt().coerceAtMost(SPEED_CEIL)
+    }
+
+    /**
+     * Phase 2: run the [LocalPlanner] for each AI car and apply its chosen speed + lane. The planned speed
+     * becomes the car's target (the control loop still clamps it curve-safe via [effectiveSpeed] and scales
+     * it by combat effects); the lane is issued directly. Silently keeps the car's current target until it
+     * anchors on the mapped ring (plan returns null), so it never regresses the proven plumbing.
+     */
+    /**
+     * Run the combat FSM ([CommanderBrain]) for one armed AI: compute its situation vs the player (signed
+     * along-track gap, own health, whether the target is a disabled "sitting duck") and update its plan mode.
+     */
+    private fun selectCombatMode(addr: String) {
+        val tgt = playerAddr ?: return
+        val ts = estimator.state(tgt); if (ts.ringIndex < 0) return
+        val s = estimator.state(addr); if (s.ringIndex < 0) return
+        val lap = roadNetwork.lapLengthMm; if (lap <= 0f) return
+        val fwd = roadNetwork.forwardGapMm(s.ringIndex, s.distAlongMm, ts.ringIndex, ts.distAlongMm)
+        val signed = if (fwd <= lap / 2f) fwd else fwd - lap   // + = player ahead of me, − = player behind me
+        val selfHealth = combat.car(addr)?.health ?: Combat.MAX_HEALTH
+        val targetDisabled = combat.car(tgt)?.disabled == true
+        planModes[addr] = CommanderBrain.selectMode(aiProfiles[addr] ?: DriverProfile.DEFAULT, selfHealth, targetDisabled, signed)
+    }
+
+    private fun planAiCars() {
+        val cars = tele.values.toList()
+        tele.keys.forEach { addr ->
+            if (addr == playerAddr) return@forEach
+            val t = tele[addr] ?: return@forEach
+            if (t.offTrack || combat.isDisabled(addr)) return@forEach
+            // Combat FSM (Phase 3 inc2): re-pick an armed AI's battle goal each tick from the live situation
+            // vs the player (close-in / tail+fire / flank / finish-off / disengage).
+            if (addr in battleAi) selectCombatMode(addr)
+            val mode = planModes[addr] ?: return@forEach
+            val top = aiTopSpeed[addr] ?: return@forEach
+            // Battle commanders hunt the player (get into firing position behind them).
+            val target = if (mode is PlanMode.Battle) playerAddr else null
+            val res = planner.plan(addr, mode, top, cars, target) ?: return@forEach
+            targetSpeed[addr] = res.speedMmps
+            // Issue the planned lane change when it meaningfully differs from the current target — but not
+            // while a weapon has locked this car's steering, nor mid-curve (lane changes are unreliable there).
+            if (!combat.steerBlocked(addr) && !t.onCurve &&
+                kotlin.math.abs(t.targetOffsetMm - res.laneOffsetMm) >= LANE_STEP) {
+                tele[addr] = t.copy(targetOffsetMm = res.laneOffsetMm)
+                mgr.changeLane(addr, res.laneOffsetMm, hSpeed = LANE_H_SPEED, hAccel = ACCEL)
+            }
+        }
     }
 
     /** Control loop: re-send each car's (curve-aware) target so a dropped write can't stall a car. */
@@ -318,8 +414,10 @@ class RaceEngine(private val mgr: CarManager) {
                     publish(); main.postDelayed(this, CONTROL_MS); return
                 }
                 combat.tick(CONTROL_MS, tele.values)   // regen energy, expire effects, respawn, AI fire
+                planAiCars()                           // Phase 2: the planner picks each AI's speed + lane
             }
             tele.keys.forEach { addr ->
+                estimator.tick(addr, CONTROL_MS)   // dead-reckon distance-along-piece between 0x27 updates
                 val t = tele[addr]
                 if (t?.offTrack == true || combat.isDisabled(addr) || (scanning && addr in staged)) {
                     mgr.drive(addr, 0, STAGE_BRAKE)   // off-track, disabled, or staged — hard-brake to a crisp stop
@@ -338,8 +436,9 @@ class RaceEngine(private val mgr: CarManager) {
             if (tickCount++ % 12 == 0) {
                 val phase = if (scanning) "SCAN" else "RACE"
                 tele.values.forEach { c ->
+                    val plan = if (c.address == playerAddr) "" else " plan=${planModes[c.address]?.let { it::class.simpleName } ?: "-"} laneTgt=${c.targetOffsetMm.toInt()}"
                     Log.i(TAG, "$phase ${c.name} piece=${c.roadPieceId} seg=${c.transitions} lap=${c.laps} " +
-                        "spd=${c.speedMmPerSec} off=${c.offTrack} curve=${c.onCurve} flags=0x${Integer.toHexString(c.parsingFlags)} tgt=${targetSpeed[c.address]}")
+                        "spd=${c.speedMmPerSec} off=${c.offTrack} curve=${c.onCurve} flags=0x${Integer.toHexString(c.parsingFlags)} tgt=${targetSpeed[c.address]}$plan")
                 }
             }
             publish()
@@ -366,13 +465,31 @@ class RaceEngine(private val mgr: CarManager) {
         val prev = lastPiece[addr] ?: -1
         var laps = t.laps
 
+        estimator.onPosition(addr, p.speedMmPerSec, p.offsetMm)   // fold in the latest speed + lateral offset
+
         if (newPiece >= 0 && newPiece != prev) {
             lastPiece[addr] = newPiece
+            // Capture each car's piece sequence + fingerprint during the scan and assemble the ring by
+            // LOOP CLOSURE (2.6 TrackMapper style — finish-piece-independent), with the finish-to-finish
+            // build as a fallback. The lead car's live sequence feeds the scan-screen track view.
+            if (scanning) scanSeq[addr]?.let { seq ->
+                seq.add(newPiece)
+                scanFp[addr]?.add((newPiece.toLong() shl 8) or (p.locationId.toLong() and 0xff))
+                if (!roadNetwork.ready) {
+                    val fp = scanFp[addr] ?: emptyList<Long>()
+                    val built = roadNetwork.buildByLoopClosure(seq, fp) ||
+                        (seq.count { it == FINISH_PIECE_ID } >= 2 && roadNetwork.buildFromSequence(seq, FINISH_PIECE_ID))
+                    if (built) Log.i(TAG, "Race.scan: road network mapped — ${roadNetwork.size} pieces/lap from ${t.name} (loc=${p.locationId})")
+                }
+                if (seq.size > discoveredTrack.size) discoveredTrack = seq.toList()   // lead mapper drives the view
+            }
+            if (roadNetwork.ready && discoveredTrack.size != roadNetwork.size) discoveredTrack = roadNetwork.pieceIds()
+            estimator.onPieceChange(addr, newPiece)
             // Lap = crossing the finish piece (id 33), DEBOUNCED: the finish piece id re-registers more
             // than once per physical lap on real tracks (the over-count bug seen in the logs — 4-5
             // segment "laps" amid ~8-segment real laps). Require ~3/4 of a lap's worth of segments
             // (measured during the scan) between counts so a re-trigger can't add a phantom lap.
-            if (newPiece == FINISH_PIECE_ID && prev != -1) {
+            if (newPiece == FINISH_PIECE_ID && prev != -1 && !finished) {   // no laps after the race has ended
                 val gate = if (segsPerLap > 0) maxOf(4, segsPerLap * 3 / 4) else 4
                 val gap = t.transitions - (lapStartSeg[addr] ?: 0)
                 if (gap >= gate) {
@@ -384,9 +501,14 @@ class RaceEngine(private val mgr: CarManager) {
                     Log.i(TAG, "${if (scanning) "SCAN" else "RACE"}.lap ${t.name} IGNORED finish re-trigger @seg ${t.transitions} (gap $gap < $gate)")
                 }
             }
-            // Scan staging: after a car completes one mapped lap, park it at the finish line so every
-            // car starts the race from the same place (fair start), wherever it began the scan.
-            val stageNow = scanning && addr !in staged && newPiece == FINISH_PIECE_ID && laps >= 1
+            // Scan staging: park a car at the finish so every car starts the race from the same place.
+            // Stage only once the ring is mapped OR this car has crossed the finish *twice* — i.e. it has
+            // driven one full finish-to-finish lap, which the ring build needs. (Staging on the FIRST
+            // crossing parked cars before a clean lap could be recorded, so the ring only mapped when a car
+            // happened to start just before the finish — otherwise Phase 2 silently fell back to no planner.)
+            val finishCrossings = if (scanning) (scanSeq[addr]?.count { it == FINISH_PIECE_ID } ?: 0) else 0
+            val stageNow = scanning && addr !in staged && newPiece == FINISH_PIECE_ID &&
+                (roadNetwork.ready || finishCrossings >= 2)
             if (stageNow) {
                 staged.add(addr); mgr.drive(addr, 0, STAGE_BRAKE)   // hard brake so it rests on the start piece
                 Log.i(TAG, "Race.scan: ${t.name} staged at start line")
@@ -420,7 +542,7 @@ class RaceEngine(private val mgr: CarManager) {
             roadPieceId = newPiece,
             locationId = p.locationId,
             offsetMm = p.offsetMm,
-            onCurve = RoadPieces.isCurve(newPiece),
+            onCurve = RoadPieceGeometry.isCurve(newPiece),
             offTrack = false,
             laps = laps,
             parsingFlags = p.parsingFlags,
@@ -443,7 +565,7 @@ class RaceEngine(private val mgr: CarManager) {
             if (cc != null) t.copy(health = cc.health, energy = cc.energy, disabled = cc.disabled) else t
         }
         val connected = playerAddr?.let { pa -> mgr.connectedCars().any { it.address == pa } } ?: true
-        state = RaceState(mode, running, elapsed(), cars, combat.playerHud(playerAddr), scanning, scanComplete, lapTarget, finished, connected)
+        state = RaceState(mode, running, elapsed(), cars, combat.playerHud(playerAddr), scanning, scanComplete, lapTarget, finished, connected, discoveredTrack)
     }
 }
 
