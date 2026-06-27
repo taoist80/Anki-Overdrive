@@ -570,6 +570,35 @@ fun InRaceHudScreen(nav: OverdriveNav) {
             }
         }
 
+        // RIVAL identity: who you're racing. A compact stack of the AI commanders' portrait + name + lap,
+        // top-left in the gap above the centered throttle (portrait resolved like the results screen).
+        val rivalCars = st.cars.filter { !it.isPlayer }
+        if (rivalCars.isNotEmpty()) {
+            Column(
+                Modifier.align(Alignment.TopStart).padding(top = if (hud != null) 16.dp else 8.dp, start = 6.dp)
+                    .widthIn(max = 150.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                rivalCars.forEach { rv ->
+                    val portrait = ContentRepository.commanders26ById.values
+                        .firstOrNull { it.name.equals(rv.name, true) }?.portraitAsset
+                    val img = rememberAsset(portrait)
+                    Row(
+                        Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0x66000000)).padding(4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        if (img != null) Image(img, rv.name, Modifier.size(24.dp).clip(CircleShape), contentScale = ContentScale.Crop)
+                        else Box(Modifier.size(24.dp).clip(CircleShape).background(colors.panelBorder))
+                        Column {
+                            Text(rv.name.uppercase(), fontFamily = font, color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, maxLines = 1, letterSpacing = 0.5.sp)
+                            Text("LAP ${rv.laps}${if (rv.offTrack) " · OFF" else ""}", fontFamily = font, color = if (rv.offTrack) colors.danger else colors.textDim, fontSize = 8.sp)
+                        }
+                    }
+                }
+            }
+        }
+
         Row(Modifier.fillMaxSize().padding(top = if (hud != null) 20.dp else 10.dp, bottom = 14.dp).padding(horizontal = 10.dp)) {
             // LEFT ~38%: vertical throttle (drag to set speed)
             Box(Modifier.weight(0.38f).fillMaxHeight(), contentAlignment = Alignment.Center) {

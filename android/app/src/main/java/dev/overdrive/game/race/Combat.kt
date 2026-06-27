@@ -349,6 +349,7 @@ class Combat {
         if (t.disabled) return
         var dmg = rawDmg.toFloat()
         if (from.isPlayer) dmg *= playerMods.damageMult                  // player's WEAPONS upgrade
+        else from.profile?.let { dmg *= it.attackMult }                  // AI commander tier: higher tier hits harder
         if (now < t.shieldUntil) dmg *= (1f - t.shieldBlock)             // real shield block %
         if (t.isPlayer) dmg *= playerMods.defenseMult                    // player's DEFENSE upgrade (incoming)
         if (dmg > 0f) { t.health -= dmg; t.lastHitAt = now }
