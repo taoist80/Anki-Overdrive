@@ -23,6 +23,7 @@ object Protocol {
     private const val MSG_SET_SPEED = 0x24
     private const val MSG_SET_OFFSET = 0x2c
     private const val MSG_CHANGE_LANE = 0x25
+    private const val MSG_TURN = 0x32           // SET_VEHICLE_UTURN (anki drive-sdk)
     private const val MSG_PING = 0x16
     private const val MSG_VERSION = 0x18
     private const val MSG_BATTERY = 0x1a
@@ -49,11 +50,27 @@ object Protocol {
     private fun le(capacity: Int, fill: ByteBuffer.() -> Unit): ByteArray =
         ByteBuffer.allocate(capacity).order(ByteOrder.LITTLE_ENDIAN).apply(fill).array()
 
-    fun sdkMode(enable: Boolean = true): ByteArray =
-        msg(MSG_SDK_MODE, byteArrayOf((if (enable) 1 else 0).toByte(), SDK_OPTION_OVERRIDE_LOCALIZATION.toByte()))
+    /**
+     * SDK mode. We **must** override localization: our app is the basestation/localization authority and
+     * the car drives *raw* at the speed we command. Without override, the car tries to self-localize an
+     * unmapped track (impossible on a fresh scan) and won't move — and `respectRoadPieceSpeedLimit` with
+     * no road network caps it to 0. (Letting the firmware drive would need 2.6's full on-phone planner,
+     * which we don't run.) So curve safety is handled manually in [RaceEngine], not by the firmware.
+     */
+    fun sdkMode(enable: Boolean = true, overrideLocalization: Boolean = true): ByteArray =
+        msg(MSG_SDK_MODE, byteArrayOf(
+            (if (enable) 1 else 0).toByte(),
+            (if (overrideLocalization) SDK_OPTION_OVERRIDE_LOCALIZATION else 0).toByte(),
+        ))
 
-    fun setSpeed(mmPerSec: Int, accelMmPerSec2: Int = 1000): ByteArray =
-        msg(MSG_SET_SPEED, le(5) { putShort(mmPerSec.toShort()); putShort(accelMmPerSec2.toShort()); put(0) })
+    /**
+     * SET_SPEED. The 3rd byte is `respectRoadPieceSpeedLimit`. It only works when the firmware owns the
+     * track (its own localization + road network) — under our override-localization model the car has no
+     * network, so `1` caps it to 0 and it won't move. So we send `0` (raw speed) and handle curve safety
+     * manually in [RaceEngine] (4.0.4/2.6 send 1 only because their on-phone planner feeds the network).
+     */
+    fun setSpeed(mmPerSec: Int, accelMmPerSec2: Int = 1000, respectLimits: Boolean = false): ByteArray =
+        msg(MSG_SET_SPEED, le(5) { putShort(mmPerSec.toShort()); putShort(accelMmPerSec2.toShort()); put(if (respectLimits) 1 else 0) })
 
     fun setOffset(offsetMm: Float): ByteArray =
         msg(MSG_SET_OFFSET, le(4) { putFloat(offsetMm) })
@@ -62,6 +79,15 @@ object Protocol {
         msg(MSG_CHANGE_LANE, le(10) {
             putShort(hSpeed.toShort()); putShort(hAccel.toShort()); putFloat(offsetMm); put(0); put(0)
         })
+
+    // Turn types / triggers (anki drive-sdk). A 180° u-turn realigns a wrong-way car with race direction.
+    private const val TURN_UTURN = 3
+    private const val TURN_TRIGGER_IMMEDIATE = 0
+    fun uTurn(): ByteArray = msg(MSG_TURN, byteArrayOf(TURN_UTURN.toByte(), TURN_TRIGGER_IMMEDIATE.toByte()))
+
+    /** Localization parse-flag bits: bit 0x40 = the vehicle is driving against the piece's forward dir. */
+    const val PARSEFLAGS_REVERSE_DRIVING = 0x40
+    const val PARSEFLAGS_REVERSE_PARSING = 0x20
 
     fun ping(): ByteArray = msg(MSG_PING)
     fun version(): ByteArray = msg(MSG_VERSION)

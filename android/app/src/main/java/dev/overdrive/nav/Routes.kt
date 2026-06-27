@@ -12,6 +12,7 @@ import kotlinx.serialization.Serializable
  */
 object Routes {
 
+    @Serializable object Splash
     @Serializable object Home
 
     // ---- Garage graph (Garage_Storyboard) ----

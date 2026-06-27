@@ -78,9 +78,19 @@ class CarManager(private val context: Context) {
     var onDelocalized: ((address: String) -> Unit)? = null
 
     init {
-        // periodic refresh so per-car uptime ticks in the UI
+        // Periodic tick: refresh per-car uptime AND run 2.6's desired-state reconnect loop. 2.6 keeps a
+        // persistent "desired connection state" per car and an always-on advertisement scan, so a dropped
+        // car re-links the instant it re-advertises (VehicleServices::SetDesiredConnectionState +
+        // StartBroadcastingAdvertisementUpdates). We mirror that: while any car the user connected is down
+        // and we aren't already scanning, keep hunting for it — the loop never gives up while it's wanted.
         main.post(object : Runnable {
-            override fun run() { if (conns.isNotEmpty()) refresh(); main.postDelayed(this, 1000) }
+            override fun run() {
+                if (conns.isNotEmpty()) {
+                    refresh()
+                    if (!scanning && conns.values.any { it.info().state == CarState.Disconnected }) startScan()
+                }
+                main.postDelayed(this, 1000)
+            }
         })
     }
 
@@ -122,8 +132,16 @@ class CarManager(private val context: Context) {
             main.post {
                 if (seen.add(d.address)) log("seen ${nm ?: "?"} ${d.address} ${r.rssi}dBm anki=$anki model=$modelId mfg=$rawMfg")
                 val looks = anki || nm?.contains("Drive", true) == true || nm?.contains("Anki", true) == true
-                if (looks && found.none { it.address == d.address } && !conns.containsKey(d.address))
+                if (!looks) return@post
+                val existing = conns[d.address]
+                if (existing != null) {
+                    // A car we already manage is advertising again. If it had dropped, it's now reachable —
+                    // reconnect directly (a direct connect to a live advertiser is fast/reliable, unlike a
+                    // stale autoConnect). This is 2.6's "reconnect on advertisement rediscovery".
+                    if (existing.info().state == CarState.Disconnected) { log("[$nm] rediscovered — reconnecting"); existing.reconnectNow() }
+                } else if (found.none { it.address == d.address }) {
                     found.add(FoundDevice(nm ?: "Anki car", d.address, r.rssi, d, modelId))
+                }
             }
         }
         override fun onScanFailed(e: Int) = log("Scan failed: $e")
@@ -145,6 +163,23 @@ class CarManager(private val context: Context) {
     /** Currently-connected cars, in connection order. */
     fun connectedCars(): List<CarInfo> = conns.values.map { it.info() }.filter { it.state == CarState.Connected }
 
+    /** Cars the user connected that are currently down (not Connected) — drives the HUD reconnect prompt. */
+    fun droppedCars(): List<CarInfo> = conns.values.map { it.info() }.filter { it.state != CarState.Connected }
+
+    /**
+     * Manual force-reconnect — the UI "Reconnect" button. 2.6 itself had no such button: its native
+     * desired-state loop never stopped trying and the player's only job was physical — reseat the car on
+     * the charger so it re-advertises (the "Get To the Charger" phase). On Android a manual kick still
+     * helps after a wedged GATT, so this tears down + re-arms every dropped car and starts an active rescan.
+     */
+    fun reconnectDropped() {
+        val down = conns.values.filter { it.info().state != CarState.Connected }
+        if (down.isEmpty()) { log("reconnect: all cars already connected"); return }
+        log("force-reconnect: ${down.size} dropped car(s) + active rescan")
+        down.forEach { it.forceReconnect() }
+        if (!scanning) startScan()
+    }
+
     /** Set a car's target speed (mm/s). The car follows the track in firmware at this speed. */
     fun drive(address: String, speedMmPerSec: Int, accelMmPerSec2: Int = 1000) =
         conns[address]?.driveCmd(speedMmPerSec, accelMmPerSec2) ?: Unit
@@ -156,6 +191,9 @@ class CarManager(private val context: Context) {
     /** Set the car's internal notion of its current offset (baseline before changeLane). */
     fun setLaneOffset(address: String, offsetMm: Float) =
         conns[address]?.offsetCmd(offsetMm) ?: Unit
+
+    /** Issue a 180° u-turn to realign a car that's driving the wrong way (against race direction). */
+    fun uTurn(address: String) = conns[address]?.uTurnCmd() ?: Unit
 
     @SuppressLint("MissingPermission")
     inner class CarConn(val device: BluetoothDevice, val name: String, val modelId: Int = -1) {
@@ -174,17 +212,35 @@ class CarManager(private val context: Context) {
             return CarInfo(device.address, name, state, lastStatus, up, drops, modelId)
         }
 
-        fun connect() {
+        fun connect(reconnect: Boolean = false) {
             state = CarState.Connecting
-            log("[$name] connecting…")
-            gatt = device.connectGatt(context, false, cb, BluetoothDevice.TRANSPORT_LE)
+            log("[$name] ${if (reconnect) "reconnecting (autoConnect)…" else "connecting…"}")
+            // autoConnect=false is fast for the first connect, but after a supervision-timeout drop the
+            // device isn't immediately connectable and a direct connect fails repeatedly (status 147).
+            // autoConnect=true lets the OS re-establish whenever the car re-advertises (picked up / placed
+            // back on the track), which is what actually makes a dropped car re-engage.
+            gatt = device.connectGatt(context, reconnect, cb, BluetoothDevice.TRANSPORT_LE)
+            // Watchdog: a reconnect that never completes must not wedge the desired-state loop. If we're
+            // still Connecting after 10s, fail it back to Disconnected so the tick/rediscovery can retry.
+            main.postDelayed({
+                if (state == CarState.Connecting && conns.containsKey(device.address)) {
+                    log("[$name] connect timed out — will retry"); teardownGatt()
+                    state = CarState.Disconnected; refresh()
+                }
+            }, 10000)
         }
+        private fun teardownGatt() { try { gatt?.disconnect(); gatt?.close() } catch (_: Exception) {}; gatt = null }
+        /** Reconnect on advertisement rediscovery: the car is live right now, so a direct connect is fastest. */
+        fun reconnectNow() { if (state == CarState.Disconnected) { teardownGatt(); connect(reconnect = false) } }
+        /** Manual force-reconnect (UI button): tear down any wedged link and re-arm with autoConnect. */
+        fun forceReconnect() { if (state != CarState.Connected) { teardownGatt(); connect(reconnect = true) } }
         fun shutdown() { driveOn = false; try { gatt?.disconnect(); gatt?.close() } catch (_: Exception) {}; gatt = null; state = CarState.Disconnected }
         fun applyPriority(p: Prio) { gatt?.requestConnectionPriority(p.v) }
         fun setStress(on: Boolean) { driveOn = on; if (on && state == CarState.Connected) main.post(driveLoop) }
 
         // Race control. Disable the lab oscillator if it was on, so the RaceEngine owns the speed.
         fun driveCmd(speed: Int, accel: Int) { driveOn = false; spd = speed; if (state == CarState.Connected) send(Protocol.setSpeed(speed, accel)) }
+        fun uTurnCmd() { if (state == CarState.Connected) send(Protocol.uTurn()) }
         fun laneCmd(offsetMm: Float, hSpeed: Int, hAccel: Int) { if (state == CarState.Connected) send(Protocol.changeLane(offsetMm, hSpeed, hAccel)) }
         fun offsetCmd(mm: Float) { if (state == CarState.Connected) send(Protocol.setOffset(mm)) }
 
@@ -210,8 +266,8 @@ class CarManager(private val context: Context) {
                     log("[$name] DISCONNECTED ${statusName(status)} after ${up}s (drops=$drops)")
                     state = CarState.Disconnected; driveOn = false
                     try { g.close() } catch (_: Exception) {}; gatt = null
-                    // auto-reconnect so the lab keeps measuring stability over time
-                    main.postDelayed({ if (conns.containsKey(device.address)) connect() }, 1500)
+                    // auto-reconnect (autoConnect=true) so a dropped car re-engages when it's back in range
+                    main.postDelayed({ if (conns.containsKey(device.address)) connect(reconnect = true) }, 1500)
                 }
                 refresh()
             }

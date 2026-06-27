@@ -1,5 +1,9 @@
 package dev.overdrive.nav
 
+import androidx.compose.animation.AnimatedContentTransitionScope.SlideDirection
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.runtime.Composable
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -26,7 +30,8 @@ import dev.overdrive.ui.screens.CountdownScreen
 import dev.overdrive.ui.screens.DevSettingsScreen
 import dev.overdrive.ui.screens.GameModeDetailScreen
 import dev.overdrive.ui.screens.GameModeSelectScreen
-import dev.overdrive.ui.screens.GameOverScreen
+import dev.overdrive.ui.screens.VictoryScreen
+import dev.overdrive.ui.screens.SplashScreen
 import dev.overdrive.ui.screens.GarageDailySpecialsScreen
 import dev.overdrive.ui.screens.GarageHomeScreen
 import dev.overdrive.ui.screens.GarageItemsScreen
@@ -66,8 +71,17 @@ import dev.overdrive.ui.screens.WeaponPickerScreen
  */
 @Composable
 fun OverdriveNavHost(nav: OverdriveNav) {
-    NavHost(navController = nav.controller, startDestination = Routes.Home) {
+    // Shared slide+fade transition matching the 3.4 storyboard "*_Push" segues (push in, pop back out).
+    NavHost(
+        navController = nav.controller,
+        startDestination = Routes.Splash,
+        enterTransition = { slideIntoContainer(SlideDirection.Start, tween(280)) + fadeIn(tween(220)) },
+        exitTransition = { slideOutOfContainer(SlideDirection.Start, tween(280)) + fadeOut(tween(220)) },
+        popEnterTransition = { slideIntoContainer(SlideDirection.End, tween(280)) + fadeIn(tween(220)) },
+        popExitTransition = { slideOutOfContainer(SlideDirection.End, tween(280)) + fadeOut(tween(220)) },
+    ) {
 
+        composable<Routes.Splash> { SplashScreen(nav) }
         composable<Routes.Home> { HomeScreen(nav) }
 
         // ---- Garage ----
@@ -103,7 +117,7 @@ fun OverdriveNavHost(nav: OverdriveNav) {
             composable<Routes.TrackScan> { TrackScanScreen(nav) }
             composable<Routes.Countdown> { CountdownScreen(nav) }
             composable<Routes.InRaceHud> { InRaceHudScreen(nav) }
-            composable<Routes.GameOver> { GameOverScreen(nav) }
+            composable<Routes.GameOver> { VictoryScreen(nav) }
             composable<Routes.RaceResults> { RaceResultsScreen(nav, it.toRoute<Routes.RaceResults>().campaignMissionId) }
         }
 

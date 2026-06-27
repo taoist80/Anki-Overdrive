@@ -30,7 +30,15 @@ UI_CARVE = {
     "nebula_base": "base",            # the violet nebula menu background
     "nebula_extended": "extended",    # wide-screen extension of the nebula
     "simplegradient": "simplegradient",
-    "controller_overlay": "controller_overlay",  # in-race HUD frame (for the HUD rebuild)
+    "controller_overlay": "controller_overlay",  # in-race HUD frame
+    # in-race HUD icons (the 4.0.4 controller.scn telemetry glyphs)
+    "hud_damage": "damage",
+    "hud_defense": "defense",
+    "hud_incoming": "incoming",
+    "hud_accel": "accel",
+    "hud_topspeed": "topSpeed",
+    "hud_lock": "lock",
+    "hud_placeontrack": "PlaceOnTrack",
 }
 APK = next((a for a in sys.argv[1:] if a.endswith(".apk")), os.path.join(ROOT, "reference/ddl404/Overdrive-4.0.4.apk"))
 

@@ -5,8 +5,11 @@ import dev.overdrive.CarType
 import dev.overdrive.GameData
 import dev.overdrive.data.model.Chapter
 import dev.overdrive.data.model.Commander
+import dev.overdrive.data.model.Commander26
 import dev.overdrive.data.model.GameMode
 import dev.overdrive.data.model.GameModeDisplayFile
+import dev.overdrive.data.model.Medal
+import dev.overdrive.data.model.MedalFile
 import dev.overdrive.data.model.Mission
 import dev.overdrive.data.model.RawStarChallenge
 import kotlinx.serialization.json.Json
@@ -34,7 +37,16 @@ object ContentRepository {
         private set
     var commandersById: Map<String, Commander> = emptyMap()
         private set
+    /** The real 2.6 Tournament roster (authentic names/bios/portraits), keyed by commander_gen2_NN. */
+    var commanders26ById: Map<String, Commander26> = emptyMap()
+        private set
     var starChallengesById: Map<String, RawStarChallenge> = emptyMap()
+        private set
+    /** The authentic 2.6 medal catalog (icons under ui/medals/, names resolved from asset-strings). */
+    var medals: List<Medal> = emptyList()
+        private set
+    /** Named-track piece layouts (track_01.. → ordered piece types), parsed from the 3.4 modular maps. */
+    var trackLayouts: Map<String, List<String>> = emptyMap()
         private set
 
     val cars: List<CarType> get() = GameData.cars
@@ -67,8 +79,19 @@ object ContentRepository {
         missionsById = missions.associateBy { it.id }
         val commanders: List<Commander> = json.decodeFromString(read(ctx, "gamedata/commanders.json"))
         commandersById = commanders.associateBy { it.id }
+        val commanders26: List<Commander26> = json.decodeFromString(read(ctx, "gamedata/campaign/commanders_2_6.json"))
+        commanders26ById = commanders26.associateBy { it.id }
         val challenges: List<RawStarChallenge> = json.decodeFromString(read(ctx, "gamedata/star_challenges.json"))
         starChallengesById = challenges.associateBy { it.id }
+
+        // Authentic 2.6 medals: resolve the string-key name/description against the asset-strings table.
+        val assetStrings = Strings.load(ctx, "gamedata/asset-strings-en.json")
+        medals = json.decodeFromString<MedalFile>(read(ctx, "gamedata/medals.json")).medals
+            .filter { it.enabled }
+            .sortedBy { it.sort }
+            .map { it.copy(name = assetStrings.get(it.name, it.id), description = assetStrings.get(it.description, "")) }
+
+        trackLayouts = json.decodeFromString(read(ctx, "gamedata/track_layouts.json"))
 
         ItemRepository.load(ctx)   // real item/weapon/loot/upgrade catalog (Phase 7)
 
@@ -78,6 +101,8 @@ object ContentRepository {
     fun modeByInternalName(name: String): GameMode? = modes.firstOrNull { it.internalName == name }
     fun missionsFor(chapter: Chapter): List<Mission> = chapter.missions.mapNotNull { missionsById[it] }
     fun commander(id: String): Commander? = commandersById[id]
+    /** The authentic 2.6 opponent (real name/bio/portrait) for a mission's `opponent` id. */
+    fun commander26(id: String?): Commander26? = id?.let { commanders26ById[it] }
 
     private fun read(ctx: Context, path: String): String =
         ctx.assets.open(path).bufferedReader().use { it.readText() }

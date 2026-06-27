@@ -46,6 +46,7 @@ import dev.overdrive.GameData
 import dev.overdrive.data.ItemRepository
 import dev.overdrive.data.model.Bay
 import dev.overdrive.data.model.GameItem
+import dev.overdrive.data.model.Interaction
 import dev.overdrive.game.MetaGame
 import dev.overdrive.nav.OverdriveNav
 import dev.overdrive.nav.Routes
@@ -547,12 +548,13 @@ fun ItemShopDetailScreen(nav: OverdriveNav, itemId: String) {
             Spacer(Modifier.height(8.dp))
             Text(ItemRepository.description(itemId), fontFamily = font, color = colors.textDim, fontSize = 13.sp, textAlign = TextAlign.Center)
             Spacer(Modifier.height(16.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(28.dp)) {
-                if (item.damagePerSec > 0) StatChip("DAMAGE", "${item.damagePerSec.toInt()}")
-                if (item.energyUsePerS > 0) StatChip("ENERGY", "${item.energyUsePerS.toInt()}")
-                if (item.rechargeTimeS > 0) StatChip("COOLDOWN", "${item.rechargeTimeS}s")
+            // Real per-item combat stats (items.json, resolved through `extends`) — vary by weapon.
+            val chips = combatStatChips(item)
+            chips.chunked(3).forEach { row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) { row.forEach { (l, v) -> StatChip(l, v) } }
+                Spacer(Modifier.height(10.dp))
             }
-            Spacer(Modifier.height(22.dp))
+            Spacer(Modifier.height(12.dp))
             if (owned) {
                 Text("OWNED", fontFamily = font, color = colors.success, fontSize = 18.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
             } else {
@@ -606,6 +608,47 @@ fun GarageDailySpecialsScreen(nav: OverdriveNav) {
             }
         }
     }
+}
+
+/**
+ * Real per-item combat stats as (label, value) chips, driven by the resolved [ItemCombat] values —
+ * so the detail page shows each weapon's actual interaction, damage, charge, cooldown, energy, and the
+ * support-item specifics (shield block %, boost %, tractor slow), plus a coarse range band.
+ */
+private fun combatStatChips(item: GameItem): List<Pair<String, String>> {
+    val k = item.combat
+    fun n(d: Double) = if (d == d.toLong().toDouble()) d.toLong().toString() else "%.1f".format(d)
+    val chips = mutableListOf<Pair<String, String>>()
+    chips += "MODE" to when (k.interaction) {
+        Interaction.HOLD -> "HOLD"; Interaction.CHARGE -> "CHARGE"; Interaction.SINGLESHOT -> "TAP"
+    }
+    when {
+        k.sustainedDps > 0 -> chips += "DAMAGE" to "${n(k.sustainedDps)}/s"
+        k.chargedDps > 0 -> chips += "DAMAGE" to "${n(k.chargedDps * k.chargeLimitS)} max"
+        k.flatDamage in 0.1..9998.0 -> chips += "DAMAGE" to n(k.flatDamage)
+        k.flatDamage >= 9999 -> chips += "DAMAGE" to "INSTANT"
+    }
+    if (k.interaction == Interaction.CHARGE && k.chargeLimitS > 0) chips += "CHARGE" to "${n(k.chargeLimitS)}s"
+    when {
+        k.cooldownMaxS > 0 && k.cooldownMaxS != k.cooldownMinS -> chips += "COOLDOWN" to "${n(k.cooldownMinS)}–${n(k.cooldownMaxS)}s"
+        k.rechargeS > 0 -> chips += "COOLDOWN" to "${n(k.rechargeS)}s"
+        k.cooldownMaxS > 0 -> chips += "COOLDOWN" to "${n(k.cooldownMaxS)}s"
+    }
+    val e = if (k.energyChargePerS > 0) k.energyChargePerS else k.energyPerS
+    when {
+        e > 0 -> chips += "ENERGY" to "${n(e)}/s"
+        k.baseEnergyCost > 0 -> chips += "ENERGY" to n(k.baseEnergyCost)
+    }
+    if (k.shieldBlockPct > 0) chips += "BLOCKS" to "${(k.shieldBlockPct * 100).toInt()}%"
+    if (k.boostSpeedAdd > 0) chips += "SPEED" to "+${(k.boostSpeedAdd * 100).toInt()}%"
+    if (k.tractorRatio > 0) chips += "SLOW TO" to "${(k.tractorRatio * 100).toInt()}%"
+    val tg = item.targeter
+    val range = when (tg?.type) {
+        "rectangle" -> tg.length; "proximity" -> tg.radius
+        "forward_track_distance" -> tg.maxDistance; else -> 0.0
+    }
+    if (range > 0) chips += "RANGE" to when { range >= 2 -> "LONG"; range >= 0.6 -> "MED"; else -> "SHORT" }
+    return chips
 }
 
 /** A small stat readout (label over value) for the item detail. */
