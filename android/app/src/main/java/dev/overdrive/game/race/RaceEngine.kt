@@ -221,6 +221,9 @@ class RaceEngine(private val mgr: CarManager) {
     fun useCachedTrack(ring: List<Int>): Boolean {
         if (!scanning) return false
         if (!roadNetwork.setRingFromLap(ring)) return false
+        // A cached track skips the mapping lap that normally measures segs/lap, so seed it from the ring
+        // size — otherwise the lap-count gate falls back to 4 and a finish re-trigger could add a phantom lap.
+        segsPerLap = roadNetwork.size
         discoveredTrack = roadNetwork.pieceIds()
         Log.i(TAG, "Race.scan: using cached track — ${roadNetwork.size} pieces [${discoveredTrack.joinToString(",")}]")
         publish(running = false)
