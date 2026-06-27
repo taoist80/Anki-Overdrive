@@ -79,7 +79,7 @@ import dev.overdrive.ui.theme.rememberAsset
 import dev.overdrive.game.MetaGame
 import dev.overdrive.game.campaign.CampaignEngine
 import dev.overdrive.game.race.RaceEngineHolder
-import dev.overdrive.game.race.DriverProfile
+import dev.overdrive.game.race.Rivals
 import dev.overdrive.game.race.RoadPieceGeometry
 import dev.overdrive.game.race.TrackCache
 import dev.overdrive.nav.Overlay
@@ -251,13 +251,12 @@ fun MatchSetupScreen(nav: OverdriveNav, mode: String, campaignMissionId: String)
                     engine.setPlayer(effectivePlayer)
                     engine.setLapTarget(lapCount)
                     engine.campaignMissionId = campaignMissionId   // carry the Tournament mission to the results screen
-                    // Tournament: race the mission's opponent commander as the AI rival, driven per its
-                    // real vehicle_setup driver profile (purerace/race/battle × aggressive/defensive × tier).
-                    val oppId = campaignMissionId.takeIf { it.isNotBlank() }?.let { ContentRepository.missionsById[it]?.opponent }
-                    engine.setCampaignOpponent(oppId?.let { id ->
-                        val legacy = ContentRepository.commander(id)
-                        DriverProfile.fromSetup(id, ContentRepository.commander26(id)?.name, legacy?.vehicleSetup, legacy?.tier ?: 1, legacy?.vehicleLevel ?: 1)
-                    })
+                    // Tournament: the mission's opponent commander leads the AI rival field; other
+                    // commanders fill any extra cars. Each is driven per its real vehicle_setup profile
+                    // (purerace/race/battle × aggressive/defensive × tier). Open Play (no mission) = generic.
+                    val primaryRivalId = campaignMissionId.takeIf { it.isNotBlank() }
+                        ?.let { ContentRepository.missionsById[it]?.opponent }
+                    engine.setRivals(if (primaryRivalId != null) Rivals.field(primaryRivalId, mgr.maxCars - 1) else emptyList())
                     engine.arm(mode)
                     nav.go(Routes.TrackScan)
                 },
