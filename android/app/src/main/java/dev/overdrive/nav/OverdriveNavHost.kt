@@ -53,6 +53,7 @@ import dev.overdrive.ui.screens.StoreCheckoutOptionsScreen
 import dev.overdrive.ui.screens.StoreCheckoutSummaryScreen
 import dev.overdrive.ui.screens.StoreHomeScreen
 import dev.overdrive.ui.screens.TrackDetailScreen
+import dev.overdrive.ui.screens.TournamentLadderScreen
 import dev.overdrive.ui.screens.TrackScanScreen
 import dev.overdrive.ui.screens.TracksHomeScreen
 import dev.overdrive.ui.screens.VehicleDetailScreen
@@ -100,7 +101,7 @@ fun OverdriveNavHost(nav: OverdriveNav) {
         navigation<Routes.RaceGraph>(startDestination = Routes.MatchSetup()) {
             composable<Routes.MatchSetup> {
                 val a = it.toRoute<Routes.MatchSetup>()
-                MatchSetupScreen(nav, a.mode, a.campaignMissionId)
+                MatchSetupScreen(nav, a.mode, a.campaignMissionId, a.ladderRung)
             }
             composable<Routes.TrackScan> { TrackScanScreen(nav) }
             composable<Routes.Countdown> { CountdownScreen(nav) }
@@ -108,6 +109,9 @@ fun OverdriveNavHost(nav: OverdriveNav) {
             composable<Routes.GameOver> { VictoryScreen(nav) }
             composable<Routes.RaceResults> { RaceResultsScreen(nav, it.toRoute<Routes.RaceResults>().campaignMissionId) }
         }
+
+        // ---- Tournament ladder ----
+        composable<Routes.TournamentLadder> { TournamentLadderScreen(nav) }
 
         // ---- Campaign ----
         navigation<Routes.CampaignGraph>(startDestination = Routes.ChapterSelect) {

@@ -2,6 +2,7 @@ package dev.overdrive.ui.screens
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -40,6 +41,7 @@ import dev.overdrive.data.ContentRepository
 import dev.overdrive.data.model.Chapter
 import dev.overdrive.data.model.Mission
 import dev.overdrive.game.campaign.CampaignEngine
+import dev.overdrive.game.race.Rivals
 import dev.overdrive.nav.Overlay
 import dev.overdrive.nav.OverdriveNav
 import dev.overdrive.nav.Routes
@@ -325,5 +327,67 @@ private fun InfoCol(label: String, value: String) {
     Column {
         Text(label, fontFamily = font, color = colors.textDim, fontSize = 10.sp, letterSpacing = 1.5.sp)
         Text(value, fontFamily = font, color = colors.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+/**
+ * TOURNAMENT LADDER (Feature 4) — a standalone bracket of AI commanders to beat in sequence, distinct from
+ * the campaign missions. Each rung is one commander; difficulty ramps by tier. Beating the frontier rung
+ * advances [ProfileRepository.profile.ladderRung] (in the race results), unlocking the next. Cleared rungs
+ * are checked, the frontier rung is playable, later rungs are locked.
+ */
+@Composable
+fun TournamentLadderScreen(nav: OverdriveNav) {
+    val ctx = LocalContext.current
+    val colors = OverdriveTheme.colors
+    val font = OverdriveTheme.font
+    remember { CampaignEngine.ensureLoaded(ctx); ProfileRepository.load(ctx); 0 }
+    val rungs = remember { Rivals.ladder() }
+    val progress = ProfileRepository.profile.ladderRung
+
+    OverdriveScaffold(
+        title = "Tournament Ladder", onBack = { nav.back() },
+        right = { Text("${progress.coerceAtMost(rungs.size)} / ${rungs.size}", fontFamily = font, color = colors.gold, fontSize = 13.sp, fontWeight = FontWeight.Bold) },
+    ) { mod ->
+        if (rungs.isEmpty()) {
+            Box(mod.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("No commanders found.", fontFamily = font, color = colors.textDim)
+            }
+            return@OverdriveScaffold
+        }
+        Column(mod.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                if (progress >= rungs.size) "Ladder complete — you've beaten every commander."
+                else "Beat each commander to climb the ladder. Next up: rung ${progress + 1}.",
+                fontFamily = font, color = colors.textDim, fontSize = 12.sp, modifier = Modifier.padding(bottom = 4.dp),
+            )
+            rungs.forEachIndexed { i, p ->
+                val cleared = i < progress
+                val current = i == progress
+                val locked = i > progress
+                val accent = when { current -> colors.gold; cleared -> colors.success; else -> colors.panelBorder }
+                val portrait = rememberAsset(ContentRepository.commander26(p.commanderId)?.portraitAsset)
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                        .background(colors.panel.copy(alpha = if (locked) 0.3f else 0.7f))
+                        .border(if (current) 2.dp else 1.dp, accent.copy(alpha = if (locked) 0.4f else 0.85f), RoundedCornerShape(12.dp))
+                        .alpha(if (locked) 0.55f else 1f)
+                        .clickable(enabled = current) { nav.go(Routes.MatchSetup(mode = "race", ladderRung = i)) }
+                        .padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text("${i + 1}", fontFamily = font, color = accent, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(28.dp))
+                    if (portrait != null) Image(portrait, p.displayName, Modifier.size(48.dp).clip(RoundedCornerShape(percent = 50)), contentScale = ContentScale.Crop)
+                    else Box(Modifier.size(48.dp).clip(RoundedCornerShape(percent = 50)).background(colors.panelBorder))
+                    Column(Modifier.weight(1f)) {
+                        Text((p.displayName ?: "?").uppercase(), fontFamily = font, color = colors.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                        Text("TIER ${p.tier}", fontFamily = font, color = colors.textDim, fontSize = 10.sp, letterSpacing = 1.sp)
+                    }
+                    Text(when { cleared -> "✓ BEATEN"; current -> "▶ RACE"; else -> "LOCKED" },
+                        fontFamily = font, color = accent, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                }
+            }
+        }
     }
 }

@@ -22,6 +22,13 @@ object Rivals {
         ContentRepository.commandersById.keys.mapNotNull { profile(it) }.sortedBy { it.displayName }
 
     /**
+     * The Tournament ladder: distinct commanders ordered as a difficulty ramp (tier, then name) — each is
+     * one rung to beat in sequence. Stable ordering so a persisted rung index stays valid across launches.
+     */
+    fun ladder(): List<DriverProfile> =
+        roster().distinctBy { it.displayName }.sortedWith(compareBy({ it.tier }, { it.displayName }))
+
+    /**
      * An ordered field of [size] rivals: [primaryId] first (the campaign opponent / chosen rival), then
      * other distinct commanders as fillers — preferring a similar tier so the field is balanced — so a
      * 3–4 car race is a field of named rivals. Extra cars past the field stay generic.

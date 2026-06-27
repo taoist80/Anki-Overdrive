@@ -137,6 +137,8 @@ class RaceEngine(private val mgr: CarManager) {
     private val aiProfiles = HashMap<String, DriverProfile>()    // per-AI-car profile (assigned in arm)
     /** The Tournament mission this race belongs to ("" = Open Play); carried to the results screen. */
     var campaignMissionId: String = ""
+    /** The Tournament-ladder rung (0-based) this race is, or -1 if not a ladder match; carried to results. */
+    var ladderRung: Int = -1
     /** The primary rival commander's display name (for the victory "DEFEATED: …"), null in Open Play. */
     val opponentName: String? get() = rivals.firstOrNull()?.displayName
     /**

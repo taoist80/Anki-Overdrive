@@ -31,6 +31,7 @@ data class Profile(
     val inventory: Map<String, Int> = emptyMap(),       // itemId -> count (loot rewards)
     val vehicleUpgrades: Map<String, Int> = emptyMap(), // "<carId>:<track>" -> level
     val loadout: Map<String, String> = emptyMap(),      // "<carId>:<bay>" -> equipped itemId
+    val ladderRung: Int = 0,                            // Tournament ladder: number of rungs cleared (= next playable rung)
 ) {
     val level: Int get() = 1 + xp / 1000
     val totalStars: Int get() = missions.values.sumOf { it.completedTaskIds.size }
@@ -128,6 +129,13 @@ object ProfileRepository {
         profile = profile.copy(coins = profile.coins - cost, vehicleUpgrades = ups)
         persist(ctx)
         return true
+    }
+
+    /** Advance the Tournament ladder when [clearedRung] (0-based) is the current frontier — unlocks the next. */
+    fun advanceLadder(ctx: Context, clearedRung: Int) {
+        if (clearedRung != profile.ladderRung) return   // only the frontier rung advances progress
+        profile = profile.copy(ladderRung = profile.ladderRung + 1)
+        persist(ctx)
     }
 
     private fun persist(ctx: Context) {

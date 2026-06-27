@@ -36,12 +36,15 @@ object Routes {
 
     // ---- Race graph (GameV2_Storyboard) — shared by OpenPlay and Campaign ----
     @Serializable object RaceGraph
-    @Serializable data class MatchSetup(val mode: String = "", val campaignMissionId: String = "")
+    @Serializable data class MatchSetup(val mode: String = "", val campaignMissionId: String = "", val ladderRung: Int = -1)
     @Serializable object TrackScan
     @Serializable object Countdown
     @Serializable object InRaceHud
     @Serializable object GameOver
     @Serializable data class RaceResults(val campaignMissionId: String = "")
+
+    // ---- Tournament ladder (standalone bracket of AI commanders, separate from campaign missions) ----
+    @Serializable object TournamentLadder
 
     // ---- Campaign graph (ChapterSelect_Storyboard / Tournament_Storyboard) ----
     @Serializable object CampaignGraph

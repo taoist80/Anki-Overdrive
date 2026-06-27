@@ -44,7 +44,7 @@ import dev.overdrive.ui.theme.rememberAsset
  * violet theme via OverdriveScaffold + the shared components.
  */
 
-/** Single Player: Campaign · Open Play · Test Track, as three full-height portrait cards. */
+/** Single Player: Campaign · Tournament · Open Play · Test Track, as full-height portrait cards. */
 @Composable
 fun SinglePlayerScreen(nav: OverdriveNav) {
     OverdriveScaffold(title = "Single Player", onBack = { nav.back() }) { mod ->
@@ -52,6 +52,8 @@ fun SinglePlayerScreen(nav: OverdriveNav) {
         Row(mod.padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             HubCard("Campaign", "Earn stars, unlock chapters", colors.blue,
                 "ui/ui_selectMode_tournament.png", Modifier.weight(1f)) { nav.go(Routes.CampaignGraph) }
+            HubCard("Tournament", "Climb the AI commander ladder", colors.danger,
+                "ui/ui_selectMode_tournament.png", Modifier.weight(1f)) { nav.go(Routes.TournamentLadder) }
             HubCard("Open Play", "Quick race or battle — your rules", colors.gold,
                 "ui/ui_selectMode_openPlay.png", Modifier.weight(1f)) { nav.go(Routes.OpenPlayGraph) }
             HubCard("Test Track", "Free drive, no scoring", colors.success,
