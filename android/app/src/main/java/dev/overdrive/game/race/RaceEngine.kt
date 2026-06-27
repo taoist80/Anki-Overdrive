@@ -30,6 +30,7 @@ data class CarTelemetry(
     val offTrack: Boolean = false,
     val transitions: Int = 0,
     val laps: Int = 0,
+    val parsingFlags: Int = 0,           // 0x27 parse flags; bit 0x40 = driving wrong way
     val lastUpdateMs: Long = 0L,
     val health: Float = Combat.MAX_HEALTH,
     val energy: Float = Combat.MAX_ENERGY,
@@ -46,6 +47,7 @@ data class RaceState(
     val scanComplete: Boolean = false,   // every car has mapped a full lap (ready to race)
     val lapTarget: Int = 3,              // laps to finish (RACE/BATTLE-RACE); 0 = endless (battle/koth)
     val finished: Boolean = false,       // the race has ended (a car reached lapTarget)
+    val playerConnected: Boolean = true, // false when the player's car has dropped its BLE link (reconnecting)
 ) {
     /** Standings: most laps, then most segment transitions (track-progress tiebreaker). */
     val standings: List<CarTelemetry>
@@ -71,9 +73,10 @@ class RaceEngine(private val mgr: CarManager) {
         const val CURVE_SPEED = 450     // mm/s ceiling while on a curve piece
         const val HOLD_DT_S = 0.08f     // weapon charge tick (matches the HUD's ~80ms hold loop)
         const val PLAYER_START = 500    // mm/s default when the race starts
-        const val AI_BASE = 440         // mm/s base for AI rivals (varied per car)
+        const val AI_BASE = 800         // mm/s base for AI rivals (4.0.4 bots run ~1000); scaled by tier profile
         const val AI_SPREAD = 40        // mm/s step between AI rivals
-        const val ACCEL = 1000          // mm/s^2 (gentle — reduces fishtail on speed changes)
+        const val ACCEL = 700           // mm/s^2 — matches 4.0.4 (gentle accel + firmware curve limits = stable)
+        const val UTURN_COOLDOWN_MS = 3000L  // min gap between wrong-way u-turns (a u-turn takes ~1-2s to execute)
         const val LANE_STEP = 44f       // mm per lane nudge
         const val LANE_LIMIT = 68f      // mm max offset from centerline
         const val LANE_H_SPEED = 400    // mm/s horizontal during a lane change
@@ -105,6 +108,7 @@ class RaceEngine(private val mgr: CarManager) {
     private var tickCount = 0
     private val staged = HashSet<String>()   // cars parked at the finish line during scan staging
     private val lapStartSeg = HashMap<String, Int>()  // each car's segment-count at its last lap boundary
+    private val lastUTurnAt = HashMap<String, Long>()  // debounce wrong-way u-turns per car
     private var segsPerLap = 0                // segments in one physical lap, measured during the scan
     private var lapTarget = 3
     private var finished = false
@@ -225,7 +229,7 @@ class RaceEngine(private val mgr: CarManager) {
         )
         combat.init(roster, prof.loadoutFor(playerCarId), weaponsEnabled, mods)
         aiProfiles.forEach { (addr, p) -> combat.setProfile(addr, p) }   // AI rivals drive per their commander stats
-        opponentProfile?.let { Log.i(TAG, "Race.start: opponent=${it.displayName} speed×${it.speedScale} aggr=${it.aggression} weapons=${it.weaponsOn}") }
+        opponentProfile?.let { Log.i(TAG, "Race.start: opponent=${it.displayName} [${it.trait}] speed×${"%.2f".format(it.speedScale)} fireCD=${it.fireCooldownMs}ms weapons=${it.weaponsOn}") }
         Log.i(TAG, "Race.start: driving ${tele.size} cars, targets=$targetSpeed")
         publish(running = true)
         main.removeCallbacks(control)
@@ -304,6 +308,14 @@ class RaceEngine(private val mgr: CarManager) {
                 val timedOut = SystemClock.elapsedRealtime() - scanStartedAt > SCAN_TIMEOUT_MS
                 if (allStaged || timedOut) { finishScan(timedOut); return }
             } else {
+                // 2.6 "Vehicle Disconnected" pause: if the player's car has dropped its BLE link, hold EVERY
+                // car (so the AI can't finish or fight while you reconnect) until it's back. State carries
+                // playerConnected=false so the HUD shows the pause modal; the race resumes on reconnect.
+                val playerLinked = playerAddr?.let { pa -> mgr.connectedCars().any { it.address == pa } } ?: true
+                if (!playerLinked) {
+                    tele.keys.forEach { mgr.drive(it, 0, STAGE_BRAKE) }
+                    publish(); main.postDelayed(this, CONTROL_MS); return
+                }
                 combat.tick(CONTROL_MS, tele.values)   // regen energy, expire effects, respawn, AI fire
             }
             tele.keys.forEach { addr ->
@@ -326,7 +338,7 @@ class RaceEngine(private val mgr: CarManager) {
                 val phase = if (scanning) "SCAN" else "RACE"
                 tele.values.forEach { c ->
                     Log.i(TAG, "$phase ${c.name} piece=${c.roadPieceId} seg=${c.transitions} lap=${c.laps} " +
-                        "spd=${c.speedMmPerSec} off=${c.offTrack} curve=${c.onCurve} tgt=${targetSpeed[c.address]}")
+                        "spd=${c.speedMmPerSec} off=${c.offTrack} curve=${c.onCurve} flags=0x${Integer.toHexString(c.parsingFlags)} tgt=${targetSpeed[c.address]}")
                 }
             }
             publish()
@@ -387,6 +399,21 @@ class RaceEngine(private val mgr: CarManager) {
         if (t.offTrack && (state.running || (scanning && addr !in staged)))
             mgr.drive(addr, effectiveSpeed(addr, newPiece), ACCEL)
 
+        // Wrong-way correction — ported from 4.0.4 CarManager._position_update: only u-turn when the car
+        // crosses the START/FINISH piece (33/34) parsing in reverse, i.e. it's genuinely going the wrong
+        // way around the track. (Firing on every reverse-flagged piece spuriously flipped correctly-driving
+        // cars — the cause of the "both cars backwards, never righting" chaos.) Gated to the start piece it
+        // fires at most ~once per lap and self-clears once the car comes about.
+        if (state.running && !scanning && (newPiece == FINISH_PIECE_ID || newPiece == 34)) {
+            val reverse = (p.parsingFlags and (Protocol.PARSEFLAGS_REVERSE_DRIVING or Protocol.PARSEFLAGS_REVERSE_PARSING)) != 0
+            val now = SystemClock.elapsedRealtime()
+            if (reverse && now - (lastUTurnAt[addr] ?: 0L) > UTURN_COOLDOWN_MS) {
+                lastUTurnAt[addr] = now
+                mgr.uTurn(addr)
+                Log.i(TAG, "Race.uTurn ${t.name} crossed start piece $newPiece in REVERSE (flags=0x${Integer.toHexString(p.parsingFlags)}) -> u-turn")
+            }
+        }
+
         tele[addr] = t.copy(
             speedMmPerSec = p.speedMmPerSec,
             roadPieceId = newPiece,
@@ -395,6 +422,7 @@ class RaceEngine(private val mgr: CarManager) {
             onCurve = RoadPieces.isCurve(newPiece),
             offTrack = false,
             laps = laps,
+            parsingFlags = p.parsingFlags,
             lastUpdateMs = SystemClock.elapsedRealtime(),
         )
         publish()
@@ -413,7 +441,8 @@ class RaceEngine(private val mgr: CarManager) {
             val cc = combat.car(t.address)
             if (cc != null) t.copy(health = cc.health, energy = cc.energy, disabled = cc.disabled) else t
         }
-        state = RaceState(mode, running, elapsed(), cars, combat.playerHud(playerAddr), scanning, scanComplete, lapTarget, finished)
+        val connected = playerAddr?.let { pa -> mgr.connectedCars().any { it.address == pa } } ?: true
+        state = RaceState(mode, running, elapsed(), cars, combat.playerHud(playerAddr), scanning, scanComplete, lapTarget, finished, connected)
     }
 }
 

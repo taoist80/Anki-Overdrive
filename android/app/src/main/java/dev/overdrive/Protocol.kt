@@ -23,6 +23,7 @@ object Protocol {
     private const val MSG_SET_SPEED = 0x24
     private const val MSG_SET_OFFSET = 0x2c
     private const val MSG_CHANGE_LANE = 0x25
+    private const val MSG_TURN = 0x32           // SET_VEHICLE_UTURN (anki drive-sdk)
     private const val MSG_PING = 0x16
     private const val MSG_VERSION = 0x18
     private const val MSG_BATTERY = 0x1a
@@ -49,11 +50,26 @@ object Protocol {
     private fun le(capacity: Int, fill: ByteBuffer.() -> Unit): ByteArray =
         ByteBuffer.allocate(capacity).order(ByteOrder.LITTLE_ENDIAN).apply(fill).array()
 
-    fun sdkMode(enable: Boolean = true): ByteArray =
-        msg(MSG_SDK_MODE, byteArrayOf((if (enable) 1 else 0).toByte(), SDK_OPTION_OVERRIDE_LOCALIZATION.toByte()))
+    /**
+     * SDK mode. We **don't** override localization by default: with override on, the car expects the host
+     * to feed it position overrides (which a full planner like 2.6's does) — we don't, so the car's own
+     * localization + per-piece curve speed-limiting is effectively disabled, and it flies off curves /
+     * drives wrong-way / can't recover. Letting the firmware localize the scanned track (+ respect its
+     * per-piece speed limits) is the stable, known-good behaviour for our direct-control model.
+     */
+    fun sdkMode(enable: Boolean = true, overrideLocalization: Boolean = false): ByteArray =
+        msg(MSG_SDK_MODE, byteArrayOf(
+            (if (enable) 1 else 0).toByte(),
+            (if (overrideLocalization) SDK_OPTION_OVERRIDE_LOCALIZATION else 0).toByte(),
+        ))
 
-    fun setSpeed(mmPerSec: Int, accelMmPerSec2: Int = 1000): ByteArray =
-        msg(MSG_SET_SPEED, le(5) { putShort(mmPerSec.toShort()); putShort(accelMmPerSec2.toShort()); put(0) })
+    /**
+     * SET_SPEED. The 3rd byte is `respectRoadPieceSpeedLimit` — when 1, the firmware auto-slows for the
+     * scanned track's per-piece limits (curves/jumps), which is what keeps the car on the track. 4.0.4
+     * sends 1 everywhere in-race; we were sending 0, so nothing capped curves and cars flew off.
+     */
+    fun setSpeed(mmPerSec: Int, accelMmPerSec2: Int = 1000, respectLimits: Boolean = true): ByteArray =
+        msg(MSG_SET_SPEED, le(5) { putShort(mmPerSec.toShort()); putShort(accelMmPerSec2.toShort()); put(if (respectLimits) 1 else 0) })
 
     fun setOffset(offsetMm: Float): ByteArray =
         msg(MSG_SET_OFFSET, le(4) { putFloat(offsetMm) })
@@ -62,6 +78,15 @@ object Protocol {
         msg(MSG_CHANGE_LANE, le(10) {
             putShort(hSpeed.toShort()); putShort(hAccel.toShort()); putFloat(offsetMm); put(0); put(0)
         })
+
+    // Turn types / triggers (anki drive-sdk). A 180° u-turn realigns a wrong-way car with race direction.
+    private const val TURN_UTURN = 3
+    private const val TURN_TRIGGER_IMMEDIATE = 0
+    fun uTurn(): ByteArray = msg(MSG_TURN, byteArrayOf(TURN_UTURN.toByte(), TURN_TRIGGER_IMMEDIATE.toByte()))
+
+    /** Localization parse-flag bits: bit 0x40 = the vehicle is driving against the piece's forward dir. */
+    const val PARSEFLAGS_REVERSE_DRIVING = 0x40
+    const val PARSEFLAGS_REVERSE_PARSING = 0x20
 
     fun ping(): ByteArray = msg(MSG_PING)
     fun version(): ByteArray = msg(MSG_VERSION)

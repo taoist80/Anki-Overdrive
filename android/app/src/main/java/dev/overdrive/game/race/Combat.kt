@@ -426,12 +426,12 @@ class Combat {
                 val regen = ENERGY_REGEN_PER_S * (if (c.isPlayer) playerMods.energyMult else 1f)
                 c.energy = (c.energy + regen * dt).coerceAtMost(MAX_ENERGY)
             }
-            // AI rivals fire per their driver profile: `purerace` never fires; aggression scales the
-            // cadence (relentless ≈ 2× as often); defensive cars pop support/shield when energy is high.
+            // AI rivals fire per their 2.6 driver profile: `purerace` never fires; the aggressive trait
+            // sets the item-use cadence (lazy ~9s … ultra ~1.25s — real 2.6 cooldowns); defensive cars
+            // pop support/shield when they have the energy.
             if (!c.isPlayer && !c.disabled) {
                 val prof = c.profile ?: DriverProfile.DEFAULT
-                val period = (AI_FIRE_PERIOD_MS * (1.6f - prof.aggression).coerceIn(0.6f, 1.5f)).toLong()
-                if (prof.weaponsOn && now - c.lastAiFireAt >= period && c.energy > MAX_ENERGY * 0.4f) {
+                if (prof.weaponsOn && now - c.lastAiFireAt >= prof.fireCooldownMs && c.energy > MAX_ENERGY * 0.4f) {
                     c.lastAiFireAt = now
                     val bay = if (prof.defensive && c.energy > MAX_ENERGY * 0.7f) Bay.SUPPORT else Bay.ATTACK
                     fire(c.address, bay, telemetry)

@@ -157,6 +157,9 @@ class CarManager(private val context: Context) {
     fun setLaneOffset(address: String, offsetMm: Float) =
         conns[address]?.offsetCmd(offsetMm) ?: Unit
 
+    /** Issue a 180° u-turn to realign a car that's driving the wrong way (against race direction). */
+    fun uTurn(address: String) = conns[address]?.uTurnCmd() ?: Unit
+
     @SuppressLint("MissingPermission")
     inner class CarConn(val device: BluetoothDevice, val name: String, val modelId: Int = -1) {
         private var gatt: BluetoothGatt? = null
@@ -174,10 +177,14 @@ class CarManager(private val context: Context) {
             return CarInfo(device.address, name, state, lastStatus, up, drops, modelId)
         }
 
-        fun connect() {
+        fun connect(reconnect: Boolean = false) {
             state = CarState.Connecting
-            log("[$name] connecting…")
-            gatt = device.connectGatt(context, false, cb, BluetoothDevice.TRANSPORT_LE)
+            log("[$name] ${if (reconnect) "reconnecting (autoConnect)…" else "connecting…"}")
+            // autoConnect=false is fast for the first connect, but after a supervision-timeout drop the
+            // device isn't immediately connectable and a direct connect fails repeatedly (status 147).
+            // autoConnect=true lets the OS re-establish whenever the car re-advertises (picked up / placed
+            // back on the track), which is what actually makes a dropped car re-engage.
+            gatt = device.connectGatt(context, reconnect, cb, BluetoothDevice.TRANSPORT_LE)
         }
         fun shutdown() { driveOn = false; try { gatt?.disconnect(); gatt?.close() } catch (_: Exception) {}; gatt = null; state = CarState.Disconnected }
         fun applyPriority(p: Prio) { gatt?.requestConnectionPriority(p.v) }
@@ -185,6 +192,7 @@ class CarManager(private val context: Context) {
 
         // Race control. Disable the lab oscillator if it was on, so the RaceEngine owns the speed.
         fun driveCmd(speed: Int, accel: Int) { driveOn = false; spd = speed; if (state == CarState.Connected) send(Protocol.setSpeed(speed, accel)) }
+        fun uTurnCmd() { if (state == CarState.Connected) send(Protocol.uTurn()) }
         fun laneCmd(offsetMm: Float, hSpeed: Int, hAccel: Int) { if (state == CarState.Connected) send(Protocol.changeLane(offsetMm, hSpeed, hAccel)) }
         fun offsetCmd(mm: Float) { if (state == CarState.Connected) send(Protocol.setOffset(mm)) }
 
@@ -210,8 +218,8 @@ class CarManager(private val context: Context) {
                     log("[$name] DISCONNECTED ${statusName(status)} after ${up}s (drops=$drops)")
                     state = CarState.Disconnected; driveOn = false
                     try { g.close() } catch (_: Exception) {}; gatt = null
-                    // auto-reconnect so the lab keeps measuring stability over time
-                    main.postDelayed({ if (conns.containsKey(device.address)) connect() }, 1500)
+                    // auto-reconnect (autoConnect=true) so a dropped car re-engages when it's back in range
+                    main.postDelayed({ if (conns.containsKey(device.address)) connect(reconnect = true) }, 1500)
                 }
                 refresh()
             }
