@@ -47,9 +47,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
-import androidx.compose.ui.graphics.drawscope.rotate
-import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -68,7 +69,9 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import dev.overdrive.AnkiCarManagerHolder
 import dev.overdrive.CarCategory
+import dev.overdrive.CarManager
 import dev.overdrive.CarState
+import dev.overdrive.CarType
 import dev.overdrive.GameData
 import dev.overdrive.data.ContentRepository
 import dev.overdrive.data.ItemRepository
@@ -169,13 +172,21 @@ fun MatchSetupScreen(nav: OverdriveNav, mode: String, campaignMissionId: String)
     remember { GameData.load(ctx); 0 }
     var playerAddr by remember { mutableStateOf<String?>(null) }
     var lapCount by remember { mutableStateOf(3) }
-    var tab by remember { mutableStateOf(CarCategory.SUPERCARS) }
 
     val connected = mgr.cars.filter { it.state != CarState.Disconnected }
     val effectivePlayer = playerAddr ?: connected.firstOrNull()?.address
-    val roster = GameData.cars.filter { it.category == tab }
     // Connected cars whose model didn't resolve to a catalog car — kept selectable so none are lost.
     val unknownConnected = connected.filter { GameData.byModelId(it.modelId) == null }
+
+    // Scan automatically while setting up: kick a scan on entry and keep re-discovering until the grid
+    // is full, so cars powered on late just appear without tapping Scan. (Dropped cars are handled by the
+    // CarManager's own desired-state reconnect loop.)
+    LaunchedEffect(Unit) {
+        while (true) {
+            if (!mgr.scanning && mgr.connectedCars().size < mgr.maxCars) mgr.startScan()
+            kotlinx.coroutines.delay(10_000)
+        }
+    }
 
     OverdriveScaffold(
         title = "Match Setup", onBack = { nav.back() },
@@ -184,53 +195,45 @@ fun MatchSetupScreen(nav: OverdriveNav, mode: String, campaignMissionId: String)
         Column(mod, verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 PrimaryButton(if (mgr.scanning) "Scanning…" else "Scan", { mgr.startScan() }, accent = ButtonAccent.Blue)
+                if (mgr.cars.any { it.state != CarState.Connected }) PrimaryButton("Reconnect", { mgr.reconnectDropped() }, accent = ButtonAccent.Gold)
                 if (mgr.cars.isNotEmpty()) PrimaryButton("Disconnect", { mgr.disconnectAll() }, accent = ButtonAccent.Outline)
                 Spacer(Modifier.weight(1f))
                 Text("${connected.size}/${mgr.maxCars} connected", fontFamily = font, color = colors.textDim, fontSize = 12.sp)
             }
             Text(
-                "Tap a connected car to make it yours (P1). Tap a nearby car to connect it." +
+                "Scanning automatically — power on your cars and they'll appear. Tap a nearby car to connect, " +
+                    "tap a connected car to make it yours (P1)." +
                     if (campaignMissionId.isNotBlank()) "   ·   Mission: $campaignMissionId" else "",
                 fontFamily = font, color = colors.textDim, fontSize = 12.sp,
             )
 
-            // Category tabs
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                CarCategory.values().forEach { c ->
-                    CategoryTab(c.label, c == tab) { tab = c }
-                }
-            }
-
-            // The roster grid takes the remaining height; the stepper + CTA pin to the bottom.
-            LazyVerticalGrid(
-                columns = GridCells.Adaptive(150.dp),
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-                contentPadding = PaddingValues(vertical = 4.dp),
-            ) {
-                items(roster, key = { it.id }) { car ->
-                    val conn = mgr.cars.firstOrNull { it.modelId == car.id && it.state != CarState.Disconnected }
-                    val found = mgr.found.firstOrNull { it.modelId == car.id }
-                    val connecting = conn != null && conn.state != CarState.Connected
-                    val (slot, detail) = when {
-                        conn != null && conn.address == effectivePlayer -> Slot.PLAYER to (if (connecting) "P1 · CONNECTING" else "P1 · YOU")
-                        conn != null -> Slot.CONNECTED to (if (connecting) "CONNECTING…" else "TAP TO SET P1")
-                        found != null -> Slot.NEARBY to "TAP TO CONNECT · ${found.rssi}dBm"
-                        else -> Slot.OFFLINE to "POWER ON"
-                    }
-                    RosterCard(car.name, car.id, slot, detail) {
-                        when {
-                            conn != null -> playerAddr = conn.address
-                            found != null -> mgr.connect(found)
-                            else -> {}
+            // All three classes on one page, side by side. Each column scrolls independently (Supercars
+            // is the longest at 10). Unrecognised connected cars ride along in the Supercars column so none
+            // are lost. This takes the remaining height; the stepper + CTA pin to the bottom.
+            Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                CarCategory.values().forEach { cat ->
+                    val catCars = GameData.cars.filter { it.category == cat }
+                    Column(Modifier.weight(1f).fillMaxHeight()) {
+                        Text(
+                            "${cat.label.uppercase()}  ·  ${catCars.size}",
+                            fontFamily = font, color = colors.gold, fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold, letterSpacing = 1.sp,
+                            modifier = Modifier.padding(bottom = 6.dp),
+                        )
+                        Column(
+                            Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            catCars.forEach { car ->
+                                RosterCarCard(car, mgr, effectivePlayer) { playerAddr = it }
+                            }
+                            if (cat == CarCategory.SUPERCARS) unknownConnected.forEach { c ->
+                                val slot = if (c.address == effectivePlayer) Slot.PLAYER else Slot.CONNECTED
+                                RosterCard(c.name.ifBlank { "Unknown Car" }, c.modelId, slot,
+                                    if (slot == Slot.PLAYER) "P1 · YOU" else "TAP TO SET P1") { playerAddr = c.address }
+                            }
                         }
                     }
-                }
-                items(unknownConnected, key = { it.address }) { c ->
-                    val slot = if (c.address == effectivePlayer) Slot.PLAYER else Slot.CONNECTED
-                    RosterCard(c.name.ifBlank { "Unknown Car" }, c.modelId, slot,
-                        if (slot == Slot.PLAYER) "P1 · YOU" else "TAP TO SET P1") { playerAddr = c.address }
                 }
             }
 
@@ -268,20 +271,24 @@ fun MatchSetupScreen(nav: OverdriveNav, mode: String, campaignMissionId: String)
 /** Which roster slot a car occupies — drives its card's accent, dot, and tap behaviour. */
 private enum class Slot { PLAYER, CONNECTED, NEARBY, OFFLINE }
 
+/** One catalog car in a class column: resolves its live connection/found state → slot + tap behaviour. */
 @Composable
-private fun CategoryTab(label: String, selected: Boolean, onClick: () -> Unit) {
-    val colors = OverdriveTheme.colors
-    val font = OverdriveTheme.font
-    val shape = RoundedCornerShape(8.dp)
-    Box(
-        Modifier.clip(shape)
-            .background(if (selected) Color(0x22FFFFFF) else Color(0x0DFFFFFF))
-            .border(1.dp, if (selected) colors.gold.copy(alpha = 0.7f) else colors.panelBorder, shape)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-    ) {
-        Text(label.uppercase(), fontFamily = font, color = if (selected) colors.textPrimary else colors.textDim,
-            fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+private fun RosterCarCard(car: CarType, mgr: CarManager, effectivePlayer: String?, onPickPlayer: (String) -> Unit) {
+    val conn = mgr.cars.firstOrNull { it.modelId == car.id && it.state != CarState.Disconnected }
+    val found = mgr.found.firstOrNull { it.modelId == car.id }
+    val connecting = conn != null && conn.state != CarState.Connected
+    val (slot, detail) = when {
+        conn != null && conn.address == effectivePlayer -> Slot.PLAYER to (if (connecting) "P1 · CONNECTING" else "P1 · YOU")
+        conn != null -> Slot.CONNECTED to (if (connecting) "CONNECTING…" else "TAP TO SET P1")
+        found != null -> Slot.NEARBY to "TAP TO CONNECT · ${found.rssi}dBm"
+        else -> Slot.OFFLINE to "POWER ON"
+    }
+    RosterCard(car.name, car.id, slot, detail) {
+        when {
+            conn != null -> onPickPlayer(conn.address)
+            found != null -> mgr.connect(found)
+            else -> {}
+        }
     }
 }
 
@@ -432,6 +439,7 @@ fun InRaceHudScreen(nav: OverdriveNav) {
     val colors = OverdriveTheme.colors
     val font = OverdriveTheme.font
     val engine = remember { RaceEngineHolder.engine }
+    val mgr = remember { AnkiCarManagerHolder.require() }
     val st = engine.state
     val player = st.cars.firstOrNull { it.isPlayer }
     val rank = st.standings.indexOfFirst { it.isPlayer }.let { if (it >= 0) it + 1 else 1 }
@@ -468,12 +476,16 @@ fun InRaceHudScreen(nav: OverdriveNav) {
                     Text("VEHICLE DISCONNECTED", fontFamily = font, color = colors.danger, fontSize = 20.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
                     Spacer(Modifier.height(10.dp))
                     Text(
-                        "Your Supercar lost its link. Reseat it on the charger to wake it up — the race is paused and resumes automatically once it reconnects (can take a few seconds).",
+                        "Your car lost its link. The race is paused and reconnects automatically the moment it's back. " +
+                            "If it went off-track and powered down, get it to the charger to wake it up, then tap Reconnect to retry now.",
                         fontFamily = font, color = colors.textDim, fontSize = 13.sp, textAlign = TextAlign.Center,
                     )
                     Spacer(Modifier.height(20.dp))
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                        Text("RECONNECTING…", fontFamily = font, color = colors.blue, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                        Box(
+                            Modifier.clip(RoundedCornerShape(10.dp)).background(colors.blue)
+                                .clickable { mgr.reconnectDropped() }.padding(horizontal = 22.dp, vertical = 10.dp),
+                        ) { Text("RECONNECT", color = Color.White, fontFamily = font, fontWeight = FontWeight.Bold, fontSize = 13.sp, letterSpacing = 1.sp) }
                         Box(
                             Modifier.clip(RoundedCornerShape(10.dp)).background(colors.danger)
                                 .clickable { engine.stop(); nav.go(Routes.GameOver) }.padding(horizontal = 22.dp, vertical = 10.dp),
@@ -797,81 +809,64 @@ fun RaceResultsScreen(nav: OverdriveNav, campaignMissionId: String) {
     }
 }
 
-/** One placed track tile: grid cell + which sprite + rotation (4.0.4 `TrackScanningMap` model). */
-private data class TrackTile(val cellX: Int, val cellY: Int, val sprite: String, val rotDeg: Float)
-
 /**
- * Assemble the discovered pieces into a tile grid exactly like 4.0.4's `TrackScanningMap.gd`: walk the
- * piece sequence on an orthogonal grid (one 256² tile per piece), every curve turning the heading 90°,
- * placing the matching sprite rotated by the heading. This is a schematic, not a metric map — 4.0.4 itself
- * warns "Visual Aid may not reflect the track" — but it's the authentic look. Maps our pieces to 4.0.4's
- * piece chars: finish piece → 'G' (start), straight → 'S', curve → 'L'/'R' by radius sign.
+ * Metrically-accurate centerline: lay the discovered pieces head-to-tail using each piece's REAL geometry
+ * ([RoadPieceGeometry] length + signed radius → arc angle `length/|radius|`), so the rendered shape matches
+ * the physical track (an oval reads as an oval) rather than 4.0.4's 90°-per-curve grid schematic.
  */
-private fun assembleTrackTiles(pieces: List<Int>): Pair<List<TrackTile>, IntArray> {
-    if (pieces.isEmpty()) return emptyList<TrackTile>() to intArrayOf(0, 0, 0, 0)
-    val startIdx = pieces.indexOf(33).let { if (it >= 0) it else 0 }       // anchor on the start/finish piece
-    val seq = pieces.drop(startIdx) + pieces.take(startIdx)
-    val chars = seq.mapIndexed { i, pid ->
-        when {
-            i == 0 -> 'G'
-            !RoadPieceGeometry.isCurve(pid) -> 'S'
-            (RoadPieceGeometry.of(pid)?.radiusMm ?: 0) >= 0 -> 'L'
-            else -> 'R'
+private fun trackCenterline(pieces: List<Int>): List<Offset> {
+    if (pieces.isEmpty()) return emptyList()
+    var x = 0.0; var y = 0.0; var hd = 0.0
+    val pts = ArrayList<Offset>(); pts.add(Offset(0f, 0f))
+    for (pid in pieces) {
+        val g = RoadPieceGeometry.of(pid)
+        val len = (g?.lengthMm ?: RoadPieceGeometry.DEFAULT_LENGTH_MM).toDouble()
+        val r = (g?.radiusMm ?: 0).toDouble()
+        if (g?.isCurve != true || r == 0.0) {                       // straight
+            x += len * kotlin.math.cos(hd); y += len * kotlin.math.sin(hd); pts.add(Offset(x.toFloat(), y.toFloat()))
+        } else {                                                     // arc of angle len/|r|, sign = turn direction
+            val total = len / kotlin.math.abs(r); val sign = if (r > 0) 1.0 else -1.0
+            val k = (Math.toDegrees(total) / 8.0).toInt().coerceAtLeast(2); val dA = total / k * sign; val seg = len / k
+            repeat(k) { hd += dA; x += seg * kotlin.math.cos(hd); y += seg * kotlin.math.sin(hd); pts.add(Offset(x.toFloat(), y.toFloat())) }
         }
     }
-    var cx = 0; var cy = 0; var dx = 1; var dy = 0
-    var minX = 0; var maxX = 0; var minY = 0; var maxY = 0
-    val out = ArrayList<TrackTile>()
-    for (c in chars) {
-        val x1 = cx + dx; val y1 = cy + dy
-        // rotation index (0-3) by heading, per 4.0.4 rebuild_track_pieces
-        val rot = when (c) {
-            'L' -> if (dy == 0 && dx == 1) 3 else if (dy == 0 && dx == -1) 1 else if (dx == 0 && dy == 1) 0 else 2
-            'R' -> if (dy == 0 && dx == 1) 0 else if (dy == 0 && dx == -1) 2 else if (dx == 0 && dy == 1) 1 else 3
-            else -> if (dy == 0 && dx == 1) 0 else if (dy == 0 && dx == -1) 2 else if (dx == 0 && dy == 1) 1 else 3
-        }
-        val (sprite, rotDeg) = when (c) {
-            'G' -> "ui/track/track-piece-start.png" to floatArrayOf(0f, 270f, 180f, 90f)[rot]
-            'S' -> "ui/track/track-piece-straight.png" to floatArrayOf(0f, 270f, 180f, 90f)[rot]
-            else -> "ui/track/track-piece-left.png" to floatArrayOf(0f, 90f, 180f, 270f)[rot]   // L/R share the curve sprite
-        }
-        out.add(TrackTile(x1, y1, sprite, rotDeg))
-        cx = x1; cy = y1
-        minX = minOf(minX, cx); maxX = maxOf(maxX, cx); minY = minOf(minY, cy); maxY = maxOf(maxY, cy)
-        when (c) {   // turn the heading 90° (4.0.4 L/R direction tables)
-            'R' -> if (dx == 1 && dy == 0) { dy = -1; dx = 0 } else if (dx == -1 && dy == 0) { dy = 1; dx = 0 } else if (dx == 0 && dy == 1) { dy = 0; dx = 1 } else { dy = 0; dx = -1 }
-            'L' -> if (dx == 1 && dy == 0) { dy = 1; dx = 0 } else if (dx == -1 && dy == 0) { dy = -1; dx = 0 } else if (dx == 0 && dy == 1) { dy = 0; dx = -1 } else { dy = 0; dx = 1 }
-        }
-    }
-    return out to intArrayOf(minX, maxX, minY, maxY)
+    return pts
 }
 
-/** Top-down track view, assembled from the real 4.0.4 piece sprites on a tile grid (grows as pieces map). */
+/**
+ * Accurate top-down track view: a road ribbon stroked along the real-geometry centerline — dark road with
+ * orange edges + a faint centre line (the 4.0.4 piece look), growing as the scan maps pieces and closing
+ * into a loop when complete.
+ */
 @Composable
 private fun TrackMapView(pieces: List<Int>, mapped: Boolean, modifier: Modifier = Modifier) {
-    val (tiles, b) = remember(pieces) { assembleTrackTiles(pieces) }
-    val straight = rememberAsset("ui/track/track-piece-straight.png")
-    val start = rememberAsset("ui/track/track-piece-start.png")
-    val curve = rememberAsset("ui/track/track-piece-left.png")
+    val orange = OverdriveTheme.colors.orange
+    val gold = OverdriveTheme.colors.gold
+    val road = Color(0xFF13101F)
+    val pts = remember(pieces) { trackCenterline(pieces) }
     Canvas(modifier) {
-        if (tiles.isEmpty()) return@Canvas
-        val gw = (b[1] - b[0] + 1); val gh = (b[3] - b[2] + 1)
-        val cell = kotlin.math.min(size.width / (gw + 0.6f), size.height / (gh + 0.6f))
-        val ox = (size.width - cell * gw) / 2f; val oy = (size.height - cell * gh) / 2f
-        for (t in tiles) {
-            val img = when {
-                t.sprite.contains("start") -> start
-                t.sprite.contains("left") -> curve
-                else -> straight
-            } ?: continue
-            val px = ox + (t.cellX - b[0]) * cell + cell / 2f
-            val py = oy + (t.cellY - b[2]) * cell + cell / 2f
-            rotate(t.rotDeg, Offset(px, py)) {
-                drawImage(img,
-                    dstOffset = IntOffset((px - cell / 2f).toInt(), (py - cell / 2f).toInt()),
-                    dstSize = IntSize(cell.toInt(), cell.toInt()))
-            }
+        if (pts.size < 2) return@Canvas
+        val minX = pts.minOf { it.x }; val maxX = pts.maxOf { it.x }
+        val minY = pts.minOf { it.y }; val maxY = pts.maxOf { it.y }
+        val roadMm = 170f                                            // real Anki track width
+        val w = (maxX - minX + roadMm).coerceAtLeast(1f); val h = (maxY - minY + roadMm).coerceAtLeast(1f)
+        val pad = 18f
+        val scale = kotlin.math.min((size.width - 2 * pad) / w, (size.height - 2 * pad) / h)
+        val ox = (size.width - (maxX - minX) * scale) / 2f - minX * scale
+        val oy = (size.height - (maxY - minY) * scale) / 2f - minY * scale
+        fun tx(o: Offset) = Offset(ox + o.x * scale, oy + o.y * scale)
+        val path = Path().apply {
+            val p0 = tx(pts[0]); moveTo(p0.x, p0.y)
+            for (i in 1 until pts.size) { val p = tx(pts[i]); lineTo(p.x, p.y) }
+            if (mapped) close()
         }
+        val roadPx = (roadMm * scale).coerceAtLeast(10f)
+        // glow → orange edges → dark road surface → faint centre line
+        drawPath(path, orange.copy(alpha = 0.22f), style = Stroke(width = roadPx + 12f, cap = StrokeCap.Round, join = StrokeJoin.Round))
+        drawPath(path, orange, style = Stroke(width = roadPx, cap = StrokeCap.Round, join = StrokeJoin.Round))
+        drawPath(path, road, style = Stroke(width = (roadPx - 8f).coerceAtLeast(2f), cap = StrokeCap.Round, join = StrokeJoin.Round))
+        drawPath(path, orange.copy(alpha = 0.45f), style = Stroke(width = 2f, cap = StrokeCap.Round, join = StrokeJoin.Round))
+        drawCircle(gold, (roadPx * 0.42f).coerceAtLeast(5f), tx(pts[0]))   // start/finish
     }
 }
 

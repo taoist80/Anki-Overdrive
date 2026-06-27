@@ -127,6 +127,7 @@ class RaceEngine(private val mgr: CarManager) {
     private val aiTopSpeed = HashMap<String, Int>()               // per-AI-car top speed the planner may pick (mm/s)
     private val scanSeq = HashMap<String, ArrayList<Int>>()       // each car's ordered piece ids during the scan
     private val scanFp = HashMap<String, ArrayList<Long>>()       // each car's ordered piece fingerprints (pieceId<<8|locationId) for loop closure
+    private val scanLapStartIdx = HashMap<String, Int>()          // scanSeq index of a car's first GATED finish crossing (ring lap start)
     private var discoveredTrack: List<Int> = emptyList()          // ordered piece ids mapped so far (scan-screen track view)
     private var lapTarget = 3
     private var finished = false
@@ -195,7 +196,7 @@ class RaceEngine(private val mgr: CarManager) {
         mgr.stopScan()             // free the BLE radio for driving
         scanning = true; scanComplete = false; finished = false; staged.clear()
         segsPerLap = 0; lapStartSeg.clear()
-        roadNetwork.clear(); estimator.clear(); scanSeq.clear(); scanFp.clear()   // rebuild the track ring fresh
+        roadNetwork.clear(); estimator.clear(); scanSeq.clear(); scanFp.clear(); scanLapStartIdx.clear()   // rebuild the ring fresh
         discoveredTrack = emptyList()
         scanStartedAt = SystemClock.elapsedRealtime()
         tele.keys.forEach { addr ->
@@ -475,13 +476,14 @@ class RaceEngine(private val mgr: CarManager) {
             if (scanning) scanSeq[addr]?.let { seq ->
                 seq.add(newPiece)
                 scanFp[addr]?.add((newPiece.toLong() shl 8) or (p.locationId.toLong() and 0xff))
-                if (!roadNetwork.ready) {
-                    val fp = scanFp[addr] ?: emptyList<Long>()
-                    val built = roadNetwork.buildByLoopClosure(seq, fp) ||
-                        (seq.count { it == FINISH_PIECE_ID } >= 2 && roadNetwork.buildFromSequence(seq, FINISH_PIECE_ID))
-                    if (built) Log.i(TAG, "Race.scan: road network mapped — ${roadNetwork.size} pieces/lap from ${t.name} (loc=${p.locationId})")
+                // Tracks WITH a finish piece build the ring from a GATED finish-to-finish lap (in the lap
+                // block below) — reliable against the finish re-trigger that was closing the ring early.
+                // Finishless tracks fall back to loop closure on the start fingerprint.
+                if (!roadNetwork.ready && FINISH_PIECE_ID !in seq &&
+                    roadNetwork.buildByLoopClosure(seq, scanFp[addr] ?: emptyList())) {
+                    Log.i(TAG, "Race.scan: road network mapped (loop) — ${roadNetwork.size} pieces [${roadNetwork.pieceIds().joinToString(",")}] from ${t.name}")
                 }
-                if (seq.size > discoveredTrack.size) discoveredTrack = seq.toList()   // lead mapper drives the view
+                if (!roadNetwork.ready && seq.size > discoveredTrack.size) discoveredTrack = seq.toList()   // live view
             }
             if (roadNetwork.ready && discoveredTrack.size != roadNetwork.size) discoveredTrack = roadNetwork.pieceIds()
             estimator.onPieceChange(addr, newPiece)
@@ -497,6 +499,15 @@ class RaceEngine(private val mgr: CarManager) {
                     lapStartSeg[addr] = t.transitions
                     if (scanning && segsPerLap == 0) segsPerLap = t.transitions  // first scan lap = segs/lap
                     Log.i(TAG, "${if (scanning) "SCAN" else "RACE"}.lap ${t.name} -> $laps @seg ${t.transitions} (segsPerLap=$segsPerLap)")
+                    // Build the ring from one GATED finish-to-finish lap (the gate rejects the finish
+                    // re-trigger that was closing the ring early): anchor at the first gated finish, then
+                    // build the slice [1st finish .. just before 2nd] at the next gated crossing.
+                    if (scanning && !roadNetwork.ready) scanSeq[addr]?.let { seq ->
+                        val startIdx = scanLapStartIdx[addr]
+                        if (startIdx == null) scanLapStartIdx[addr] = seq.size - 1
+                        else if (roadNetwork.setRingFromLap(seq.subList(startIdx, seq.size - 1)))
+                            Log.i(TAG, "Race.scan: road network mapped — ${roadNetwork.size} pieces/lap [${roadNetwork.pieceIds().joinToString(",")}] from ${t.name}")
+                    }
                 } else {
                     Log.i(TAG, "${if (scanning) "SCAN" else "RACE"}.lap ${t.name} IGNORED finish re-trigger @seg ${t.transitions} (gap $gap < $gate)")
                 }

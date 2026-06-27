@@ -109,6 +109,17 @@ class RoadNetwork {
         return false
     }
 
+    /**
+     * Set the ring from one full lap's ordered pieces (collapsing consecutive duplicates — the finish-piece
+     * re-trigger reports the same id twice in a row). Returns true if a plausible ring (≥4 pieces) results.
+     */
+    fun setRingFromLap(lap: List<Int>): Boolean {
+        val dedup = ArrayList<Int>(lap.size)
+        for (p in lap) if (dedup.isEmpty() || dedup.last() != p) dedup.add(p)
+        if (dedup.size < 4) return false
+        ring = dedup.toIntArray(); rebuildCum(); return true
+    }
+
     fun clear() { ring = IntArray(0); cum = IntArray(0) }
 
     /** The mapped ring as an ordered piece-id list (empty until built) — for the scan-screen visualization. */
