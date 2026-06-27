@@ -92,6 +92,25 @@ data class Commander26(
     val portraitAsset: String? get() = portrait.takeIf { it.isNotBlank() }?.let { "ui/commanders/$it.png" }
 }
 
+/** gameData/medals.json — the achievement medal catalog. `name`/`description` are string keys
+ *  resolved against the asset-strings table at load time. */
+@Serializable
+data class MedalFile(val medals: List<Medal> = emptyList())
+
+@Serializable
+data class Medal(
+    val id: String = "",
+    val image: String = "",
+    val reward: Int = 0,
+    val sort: Int = 0,
+    val enabled: Boolean = true,
+    val name: String = "",
+    val description: String = "",
+) {
+    /** Bundled 2.6 medal icon (extracted ui_icon_medal_* art under ui/medals/). */
+    val iconAsset: String get() = "ui/medals/$image.png"
+}
+
 /** characters/star_challenges.json — a campaign star objective (the directed task for a star). */
 @Serializable
 data class RawStarChallenge(

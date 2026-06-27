@@ -14,6 +14,7 @@ claude.ai UI action (these links make them cross-**conversation**, not public).
 | **Campaign mockup v2** | https://claude.ai/code/artifact/4455854b-7d08-4d47-a247-770f6bb0217d | Authentic 2.6 campaign: 3×2 chapter grid, vertical road-spline mission rail, real titles/briefings. | 2.6 | current — built |
 | **Campaign mockup v1** | https://claude.ai/code/artifact/f28b0362-48fa-4c31-ac86-cccc861ef143 | First campaign pass. | 2.6 | superseded by v2 |
 | **Startup / Victory / Results** | https://claude.ai/code/artifact/2ee8eb61-a4a8-4e9b-8397-2c13e7ae02fa | 2.6 victory/defeat + results (loot) end screens and the 4.0.4 startup sequence. | 2.6 + 4.0.4 | current — built |
+| **Pre-race screen coverage** | https://claude.ai/code/artifact/77a54b59-fba1-41eb-8981-997d5aa279fe | Live coverage map of every pre-race screen (matched / partial / wireframe) with per-screen layout + asset source. Generated from `reference/screen-coverage.json` via `tools/build_coverage_artifact.py`. | 2.6 → 3.4 → 4.0.4 | current — 46 matched / 2 partial / 0 wireframe |
 
 To rebuild any of these from source: the HTML lives in this session's scratchpad only (per-session), but
 each artifact is self-contained — `WebFetch` the URL to recover its full HTML, or redeploy a fresh edit to
