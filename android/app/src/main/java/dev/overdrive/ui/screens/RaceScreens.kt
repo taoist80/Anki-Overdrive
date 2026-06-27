@@ -20,6 +20,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.zIndex
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items as lazyItems
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -79,7 +81,7 @@ import dev.overdrive.ui.theme.rememberAsset
 import dev.overdrive.game.MetaGame
 import dev.overdrive.game.campaign.CampaignEngine
 import dev.overdrive.game.race.RaceEngineHolder
-import dev.overdrive.game.race.DriverProfile
+import dev.overdrive.game.race.Rivals
 import dev.overdrive.game.race.RoadPieceGeometry
 import dev.overdrive.game.race.TrackCache
 import dev.overdrive.nav.Overlay
@@ -225,7 +227,7 @@ private fun VehicleCell(c: CarType, selected: Boolean, onClick: () -> Unit) {
  * the laps-to-finish stepper + the Scan Track CTA (enabled once a car is connected).
  */
 @Composable
-fun MatchSetupScreen(nav: OverdriveNav, mode: String, campaignMissionId: String) {
+fun MatchSetupScreen(nav: OverdriveNav, mode: String, campaignMissionId: String, ladderRung: Int = -1) {
     val ctx = LocalContext.current
     val colors = OverdriveTheme.colors
     val font = OverdriveTheme.font
@@ -234,6 +236,7 @@ fun MatchSetupScreen(nav: OverdriveNav, mode: String, campaignMissionId: String)
     remember { GameData.load(ctx); 0 }
     var playerAddr by remember { mutableStateOf<String?>(null) }
     var lapCount by remember { mutableStateOf(3) }
+    var chosenRivalId by remember { mutableStateOf<String?>(null) }   // Open Play: the AI commander to race (null = generic)
 
     val connected = mgr.cars.filter { it.state != CarState.Disconnected }
     val effectivePlayer = playerAddr ?: connected.firstOrNull()?.address
@@ -299,6 +302,28 @@ fun MatchSetupScreen(nav: OverdriveNav, mode: String, campaignMissionId: String)
                 }
             }
 
+            // Tournament ladder: show the fixed rung opponent (no picker — the rung sets it).
+            if (ladderRung >= 0) {
+                val rung = remember(ladderRung) { Rivals.ladder().getOrNull(ladderRung) }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    val img = rememberAsset(ContentRepository.commander26(rung?.commanderId)?.portraitAsset)
+                    if (img != null) Image(img, rung?.displayName, Modifier.size(36.dp).clip(CircleShape), contentScale = ContentScale.Crop)
+                    Text("LADDER · RUNG ${ladderRung + 1}: ${(rung?.displayName ?: "?").uppercase()}",
+                        fontFamily = font, color = colors.gold, fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                }
+            }
+            // Open Play: choose an AI commander to race (campaign / ladder set the opponent instead).
+            if (campaignMissionId.isBlank() && ladderRung < 0) {
+                val pickRoster = remember { Rivals.roster().distinctBy { it.displayName } }
+                Text("OPPONENT", fontFamily = font, color = colors.textDim, fontSize = 11.sp, letterSpacing = 1.5.sp)
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(vertical = 2.dp)) {
+                    item { OpponentChip("Generic", null, chosenRivalId == null) { chosenRivalId = null } }
+                    lazyItems(pickRoster, key = { it.commanderId ?: it.displayName ?: "" }) { rp ->
+                        OpponentChip(rp.displayName ?: "?", ContentRepository.commander26(rp.commanderId)?.portraitAsset,
+                            chosenRivalId == rp.commanderId) { chosenRivalId = rp.commanderId }
+                    }
+                }
+            }
             // Laps-to-finish stepper (mirrors 4.0.4's LAP COUNT)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 Text("LAPS TO FINISH", fontFamily = font, color = colors.textDim, fontSize = 12.sp, letterSpacing = 1.sp)
@@ -312,13 +337,14 @@ fun MatchSetupScreen(nav: OverdriveNav, mode: String, campaignMissionId: String)
                     engine.setPlayer(effectivePlayer)
                     engine.setLapTarget(lapCount)
                     engine.campaignMissionId = campaignMissionId   // carry the Tournament mission to the results screen
-                    // Tournament: race the mission's opponent commander as the AI rival, driven per its
-                    // real vehicle_setup driver profile (purerace/race/battle × aggressive/defensive × tier).
-                    val oppId = campaignMissionId.takeIf { it.isNotBlank() }?.let { ContentRepository.missionsById[it]?.opponent }
-                    engine.setCampaignOpponent(oppId?.let { id ->
-                        val legacy = ContentRepository.commander(id)
-                        DriverProfile.fromSetup(id, ContentRepository.commander26(id)?.name, legacy?.vehicleSetup, legacy?.tier ?: 1, legacy?.vehicleLevel ?: 1)
-                    })
+                    engine.ladderRung = ladderRung                 // carry the ladder rung (or -1) to the results screen
+                    // Build the AI rival field. Primary rival = the campaign mission's opponent, else the
+                    // ladder rung's commander, else the Open-Play pick. Other commanders fill extra cars; each
+                    // is driven per its real vehicle_setup profile. No primary → generic AI.
+                    val ladderRivalId = ladderRung.takeIf { it >= 0 }?.let { Rivals.ladder().getOrNull(it)?.commanderId }
+                    val primaryRivalId = (campaignMissionId.takeIf { it.isNotBlank() }
+                        ?.let { ContentRepository.missionsById[it]?.opponent }) ?: ladderRivalId ?: chosenRivalId
+                    engine.setRivals(if (primaryRivalId != null) Rivals.field(primaryRivalId, mgr.maxCars - 1) else emptyList())
                     engine.arm(mode)
                     nav.go(Routes.TrackScan)
                 },
@@ -332,6 +358,28 @@ fun MatchSetupScreen(nav: OverdriveNav, mode: String, campaignMissionId: String)
 
 /** Which roster slot a car occupies — drives its card's accent, dot, and tap behaviour. */
 private enum class Slot { PLAYER, CONNECTED, NEARBY, OFFLINE }
+
+/** An AI-commander choice in the Open Play opponent picker: portrait + name, gold when selected. */
+@Composable
+private fun OpponentChip(name: String, portrait: String?, selected: Boolean, onClick: () -> Unit) {
+    val colors = OverdriveTheme.colors
+    val font = OverdriveTheme.font
+    val shape = RoundedCornerShape(8.dp)
+    val img = rememberAsset(portrait)
+    Column(
+        Modifier.width(64.dp).clip(shape)
+            .background(if (selected) colors.gold.copy(alpha = 0.18f) else Color(0x14FFFFFF))
+            .border(1.dp, if (selected) colors.gold else colors.panelBorder, shape)
+            .clickable(onClick = onClick).padding(6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        if (img != null) Image(img, name, Modifier.size(40.dp).clip(CircleShape), contentScale = ContentScale.Crop)
+        else Box(Modifier.size(40.dp).clip(CircleShape).background(colors.panelBorder))
+        Spacer(Modifier.height(4.dp))
+        Text(name.uppercase(), fontFamily = font, color = if (selected) colors.gold else colors.textDim,
+            fontSize = 8.sp, letterSpacing = 0.3.sp, maxLines = 1)
+    }
+}
 
 /** One catalog car in a class column: resolves its live connection/found state → slot + tap behaviour. */
 @Composable
@@ -595,6 +643,35 @@ fun InRaceHudScreen(nav: OverdriveNav) {
             }
         }
 
+        // RIVAL identity: who you're racing. A compact stack of the AI commanders' portrait + name + lap,
+        // top-left in the gap above the centered throttle (portrait resolved like the results screen).
+        val rivalCars = st.cars.filter { !it.isPlayer }
+        if (rivalCars.isNotEmpty()) {
+            Column(
+                Modifier.align(Alignment.TopStart).padding(top = if (hud != null) 16.dp else 8.dp, start = 6.dp)
+                    .widthIn(max = 150.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                rivalCars.forEach { rv ->
+                    val portrait = ContentRepository.commanders26ById.values
+                        .firstOrNull { it.name.equals(rv.name, true) }?.portraitAsset
+                    val img = rememberAsset(portrait)
+                    Row(
+                        Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0x66000000)).padding(4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        if (img != null) Image(img, rv.name, Modifier.size(24.dp).clip(CircleShape), contentScale = ContentScale.Crop)
+                        else Box(Modifier.size(24.dp).clip(CircleShape).background(colors.panelBorder))
+                        Column {
+                            Text(rv.name.uppercase(), fontFamily = font, color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, maxLines = 1, letterSpacing = 0.5.sp)
+                            Text("LAP ${rv.laps}${if (rv.offTrack) " · OFF" else ""}", fontFamily = font, color = if (rv.offTrack) colors.danger else colors.textDim, fontSize = 8.sp)
+                        }
+                    }
+                }
+            }
+        }
+
         Row(Modifier.fillMaxSize().padding(top = if (hud != null) 20.dp else 10.dp, bottom = 14.dp).padding(horizontal = 10.dp)) {
             // LEFT ~38%: vertical throttle (drag to set speed)
             Box(Modifier.weight(0.38f).fillMaxHeight(), contentAlignment = Alignment.Center) {
@@ -831,6 +908,9 @@ fun RaceResultsScreen(nav: OverdriveNav, campaignMissionId: String) {
     }
     val profile = ProfileRepository.profile                                  // observe coin balance
     val won = standings.firstOrNull()?.isPlayer == true
+    // Tournament ladder: advance the frontier rung exactly once when the player wins this rung.
+    val ladderRung = engine.ladderRung
+    remember(ladderRung) { if (ladderRung >= 0 && engine.playerWon) ProfileRepository.advanceLadder(ctx, ladderRung); 0 }
     val playerVehicle = standings.firstOrNull { it.isPlayer }?.let { carName(it.modelId, it.name) }
     // Loot is earned by WINNING (2.6: "win races to earn Loot Crates"). Roll once; auto-open the reveal,
     // which credits the coins + item to the profile on dismiss. Shown exactly once (no manual re-open to
@@ -845,6 +925,7 @@ fun RaceResultsScreen(nav: OverdriveNav, campaignMissionId: String) {
 
     OverdriveScaffold(
         title = when {
+            ladderRung >= 0 -> if (engine.playerWon) "Rung ${ladderRung + 1} Cleared" else "Rung ${ladderRung + 1} Failed"
             !isCampaign -> if (won) "Victory" else "Results"
             summary?.won == true -> "Mission Complete"
             else -> "Mission Failed"
@@ -893,8 +974,11 @@ fun RaceResultsScreen(nav: OverdriveNav, campaignMissionId: String) {
             }
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (isCampaign) PrimaryButton("Next Mission", { nav.go(Routes.CampaignGraph) }, Modifier.weight(1f), ButtonAccent.Blue)
-                else PrimaryButton("Rematch", { nav.go(Routes.MatchSetup()) }, Modifier.weight(1f), ButtonAccent.Outline)
+                when {
+                    ladderRung >= 0 -> PrimaryButton(if (engine.playerWon) "Back to Ladder" else "Try Again", { nav.go(Routes.TournamentLadder) }, Modifier.weight(1f), ButtonAccent.Blue)
+                    isCampaign -> PrimaryButton("Next Mission", { nav.go(Routes.CampaignGraph) }, Modifier.weight(1f), ButtonAccent.Blue)
+                    else -> PrimaryButton("Rematch", { nav.go(Routes.MatchSetup()) }, Modifier.weight(1f), ButtonAccent.Outline)
+                }
                 PrimaryButton("Home", { nav.home() }, Modifier.weight(1f), ButtonAccent.Outline)
             }
         }

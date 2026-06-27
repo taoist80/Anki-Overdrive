@@ -133,12 +133,14 @@ class RaceEngine(private val mgr: CarManager) {
     private var lapTarget = 3
     private var finished = false
     private var winnerAddr: String? = null   // the car that actually reached the lap target first (authoritative)
-    private var opponentProfile: DriverProfile? = null          // campaign opponent commander's driver stats
+    private var rivals: List<DriverProfile> = emptyList()        // AI commander rivals, in assignment order (primary first)
     private val aiProfiles = HashMap<String, DriverProfile>()    // per-AI-car profile (assigned in arm)
     /** The Tournament mission this race belongs to ("" = Open Play); carried to the results screen. */
     var campaignMissionId: String = ""
-    /** The opponent commander's display name (for the victory "DEFEATED: …"), null in Open Play. */
-    val opponentName: String? get() = opponentProfile?.displayName
+    /** The Tournament-ladder rung (0-based) this race is, or -1 if not a ladder match; carried to results. */
+    var ladderRung: Int = -1
+    /** The primary rival commander's display name (for the victory "DEFEATED: …"), null in Open Play. */
+    val opponentName: String? get() = rivals.firstOrNull()?.displayName
     /**
      * Did the player finish first? The winner is whoever actually reached the lap target first (captured
      * in [finishRace]) — NOT recomputed from live standings, which can tie post-finish (a trailing car's
@@ -150,7 +152,14 @@ class RaceEngine(private val mgr: CarManager) {
     fun setLapTarget(n: Int) { lapTarget = n.coerceAtLeast(0) }
 
     /** Set the Tournament opponent commander's driver profile (null = Open Play / generic rivals). */
-    fun setCampaignOpponent(profile: DriverProfile?) { opponentProfile = profile }
+    fun setCampaignOpponent(profile: DriverProfile?) { rivals = listOfNotNull(profile) }
+
+    /**
+     * Set the full ordered field of AI commander rivals. arm() assigns these to the AI cars in order
+     * (primary = the campaign opponent or the player's chosen rival); any AI car past the list end stays a
+     * generic rival. Drives the "full field of named commanders" (Open Play picker / Tournament ladder).
+     */
+    fun setRivals(profiles: List<DriverProfile>) { rivals = profiles }
     val combat = Combat()
 
     init {
@@ -173,11 +182,12 @@ class RaceEngine(private val mgr: CarManager) {
         connected.forEach { c ->
             tele[c.address] = CarTelemetry(c.address, c.name, isPlayer = c.address == playerAddr, modelId = c.modelId)
         }
-        // Assign the campaign opponent commander to the first AI car (extra cars stay generic rivals),
-        // and surface its name on that car so the HUD/standings read "Crashbot", "Roofus", etc.
+        // Assign the AI commander rivals to the AI cars in order (primary = campaign opponent / chosen
+        // rival); any car past the rival list stays a generic rival. Surface each commander's name on its
+        // car so the HUD/standings read "Crashbot", "Roofus", etc.
         aiProfiles.clear()
         tele.keys.filter { it != playerAddr }.forEachIndexed { i, addr ->
-            val p = if (i == 0) (opponentProfile ?: DriverProfile.DEFAULT) else DriverProfile.DEFAULT
+            val p = rivals.getOrNull(i) ?: DriverProfile.DEFAULT
             aiProfiles[addr] = p
             p.displayName?.let { nm -> tele[addr]?.let { tele[addr] = it.copy(name = nm) } }
         }
@@ -285,7 +295,7 @@ class RaceEngine(private val mgr: CarManager) {
         )
         combat.init(roster, prof.loadoutFor(playerCarId), weaponsEnabled, mods)
         aiProfiles.forEach { (addr, p) -> combat.setProfile(addr, p) }   // AI rivals drive per their commander stats
-        opponentProfile?.let { Log.i(TAG, "Race.start: opponent=${it.displayName} [${it.trait}] speed×${"%.2f".format(it.speedScale)} fireCD=${it.fireCooldownMs}ms weapons=${it.weaponsOn}") }
+        rivals.forEachIndexed { i, it -> Log.i(TAG, "Race.start: rival[$i]=${it.displayName} [${it.trait}] speed×${"%.2f".format(it.speedScale)} fireCD=${it.fireCooldownMs}ms weapons=${it.weaponsOn}") }
         Log.i(TAG, "Race.start: driving ${tele.size} cars, targets=$targetSpeed")
         publish(running = true)
         main.removeCallbacks(control)

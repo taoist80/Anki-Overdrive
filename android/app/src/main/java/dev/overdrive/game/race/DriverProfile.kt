@@ -21,6 +21,9 @@ data class DriverProfile(
     val followFactor: Float = 0.3f,    // how close it tails the target (0.1 hostile … 0.9 lazy)
     val weaponsOn: Boolean = true,     // `purerace` opponents never fire (race-only)
     val defensive: Boolean = false,    // prefers support/shield when it has the energy
+    val tier: Int = 1,                 // commander tier (1–3) — difficulty band
+    val attackMult: Float = 1f,        // AI weapon-damage ×scale by tier (commanders only fire the basic
+                                       // weapon, so tier strength is expressed as harder hits, not items)
     val trait: String = "default",     // e.g. "battle_aggressive_t3 → ultra/hyper" (logging)
 ) {
     enum class Aggressive(val cooldownMs: Long, val follow: Float) {
@@ -62,6 +65,8 @@ data class DriverProfile(
                 followFactor = aggr.follow,
                 weaponsOn = !purerace,
                 defensive = defensive,
+                tier = t,
+                attackMult = arrayOf(1f, 1.15f, 1.3f)[t - 1],
                 trait = "${s.ifBlank { "?" }} → ${aggr.name.lowercase()}/${speedy.name.lowercase()}",
             )
         }
