@@ -8,13 +8,19 @@
 // The earlier Anki-protocol capture scaffold lives in git history (pre-Phase-4).
 
 import Fastify from 'fastify';
+import websocket from '@fastify/websocket';
 import { randomUUID, randomBytes, scryptSync, timingSafeEqual, createHash } from 'node:crypto';
 import { db } from './db.js';
+import { RoomManager } from './rooms.js';
 
 const HOST = process.env.HOST || '0.0.0.0';
 const PORT = Number(process.env.PORT || 8080);
 
 const app = Fastify({ logger: true, bodyLimit: 4 * 1024 * 1024 });
+await app.register(websocket);
+
+// Multiplayer (Phase 12) — ephemeral race-room broker. See rooms.js + the MP build plan (ARTIFACTS.md).
+const rooms = new RoomManager(app.log);
 
 // ---------- helpers ----------
 const newId = () => randomUUID();
@@ -114,6 +120,20 @@ const STORE_ITEMS = [
   { id: 'coins_15k', kind: 'coins', name: '15,000 Coins', price: 0, grantsCoins: 15000 },
 ];
 app.get('/api/v1/store', async () => ({ items: STORE_ITEMS }));
+
+// ---------- multiplayer ----------
+// Debug: list active lobbies over plain HTTP (the device discovers rooms over WS via `listRooms`).
+app.get('/api/v1/rooms', async () => ({ rooms: rooms.list() }));
+
+// The race-room socket. Each connection is wrapped as a transport-agnostic `conn` for RoomManager.
+app.get('/ws/room', { websocket: true }, (sockOrConn) => {
+  const socket = sockOrConn.socket ?? sockOrConn; // @fastify/websocket v11 passes the raw socket; older wraps it
+  const conn = { id: randomUUID(), send: (s) => { if (socket.readyState === 1) socket.send(s); } };
+  rooms.register(conn);
+  socket.on('message', (data) => rooms.handle(conn, data.toString()));
+  socket.on('close', () => rooms.unregister(conn));
+  socket.on('error', () => rooms.unregister(conn));
+});
 
 app.listen({ host: HOST, port: PORT })
   .then(() => app.log.info(`OverdriveX backend on http://${HOST}:${PORT}`))

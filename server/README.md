@@ -31,6 +31,29 @@ protocol is not publicly documented — we reverse it by observation).
 Routing model: the redirect maps `https://accounts.api.anki.com/1/…` → `http://<server>/accounts/1/…`
 and `ankival.…` → `/ankival/1/…`. The catch-all logs anything not yet modeled and returns `200`.
 
+## Multiplayer race-room (Phase 12)
+
+A `WebSocket` broker for local-Wi-Fi multiplayer, **host-authoritative**: one phone is the
+basestation (owns all cars over BLE + runs the race in `RaceEngine`); this server owns the lobby
+roster and relays room messages. Rooms are in-memory (ephemeral); only profiles persist. Full
+design + the RE provenance (3.4.0 `GameLobbyDef` / 2.6 Mongoose `HostGameLobby`) is in the
+[multiplayer build plan](../ARTIFACTS.md). Code: `src/rooms.js`, wired in `src/server.js`.
+
+- **`GET /ws/room`** — the race-room socket. JSON messages, each tagged with `t`.
+- **`GET /api/v1/rooms`** — debug: list active lobbies over plain HTTP.
+
+Message tags (faithful subset of 3.4.0's `PlayerMessage`): `createRoom` · `listRooms` · `joinRoom`
+· `selectVehicle` · `setMode` · `setTrack` · `setReady` · `startGame` · `raceStarted` · `control`
+(client→host) · `raceState` (host→all) · `backToLobby` · `raceResults` · `emote` · `ping`. Server
+emits `roomCreated` / `roomJoined` / `roomList` / `gameLobbyUpdate` / `gameLobbyStateUpdate` /
+`lobbySyncPlayerReady` / `lobbySyncAllPlayersReady` / `hostReadyForGameStart` / `results` /
+`playerDisconnected` / `roomClosed` / `roomError`.
+
+**Two-device test:** start the server, then point each device's `BackendClient.baseUrl` at the
+Mac's LAN IP (Settings → Dev). The host device may instead use `adb reverse tcp:8080 tcp:8080`
+(→ `127.0.0.1:8080`); remote devices must use the LAN IP. Smoke test the broker headless with
+`scratchpad/test-rooms.mjs` (copy into `server/` to resolve `ws`).
+
 ## Schema
 
 `accounts`, `sessions`, `profile_kv` (the ankival KV blob store, etag-versioned), and
