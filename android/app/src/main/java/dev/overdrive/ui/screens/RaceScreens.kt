@@ -81,6 +81,7 @@ import dev.overdrive.game.campaign.CampaignEngine
 import dev.overdrive.game.race.RaceEngineHolder
 import dev.overdrive.game.race.DriverProfile
 import dev.overdrive.game.race.RoadPieceGeometry
+import dev.overdrive.game.race.TrackCache
 import dev.overdrive.nav.Overlay
 import dev.overdrive.nav.OverdriveNav
 import dev.overdrive.nav.Routes
@@ -340,6 +341,7 @@ fun TrackScanScreen(nav: OverdriveNav) {
     val font = OverdriveTheme.font
     val engine = remember { RaceEngineHolder.engine }
     remember { RoadPieceGeometry.load(ctx); 0 }     // piece geometry must be ready before driving
+    val cachedTrack = remember { TrackCache.load(ctx); TrackCache.last }   // last player-confirmed ring, if any
     LaunchedEffect(Unit) { engine.startScan() }
     val st = engine.state
 
@@ -349,12 +351,26 @@ fun TrackScanScreen(nav: OverdriveNav) {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
-            Text(if (st.scanComplete) "TRACK MAPPED" else "SCANNING TRACK…",
-                fontFamily = font, color = colors.gold, fontSize = 26.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+            val mapped = st.trackMapped
+            Text(
+                when {
+                    !st.scanComplete -> "SCANNING TRACK…"
+                    mapped -> "TRACK MAPPED"
+                    else -> "MAP INCOMPLETE"
+                },
+                fontFamily = font,
+                color = if (st.scanComplete && !mapped) colors.danger else colors.gold,
+                fontSize = 26.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp,
+            )
             Spacer(Modifier.height(8.dp))
-            Text(if (st.scanComplete) "Every car has mapped a full lap."
-                 else "Cars are driving a slow lap to map the track — keep them on the track.",
-                fontFamily = font, color = colors.textDim, fontSize = 13.sp)
+            Text(
+                when {
+                    !st.scanComplete -> "Cars are driving a slow lap to map the track — keep them on the track."
+                    mapped -> "Closed a ${st.discoveredTrack.size}-piece loop. Confirm to race, or re-scan if the shape looks wrong."
+                    else -> "Cars drove a lap but the loop didn't close cleanly — re-scan recommended before racing."
+                },
+                fontFamily = font, color = colors.textDim, fontSize = 13.sp, textAlign = TextAlign.Center,
+            )
             Spacer(Modifier.height(16.dp))
             // Live track view: the discovered pieces drawn from their real geometry, growing as the scan
             // maps them and closing into a loop when complete.
@@ -380,10 +396,25 @@ fun TrackScanScreen(nav: OverdriveNav) {
                 }
             }
             Spacer(Modifier.height(24.dp))
-            if (st.scanComplete) {
-                PrimaryButton("Continue — Countdown", { nav.go(Routes.Countdown) }, accent = ButtonAccent.Gold)
-            } else {
-                PrimaryButton("Skip scan → Countdown", { engine.stop(); nav.go(Routes.Countdown) }, accent = ButtonAccent.Outline)
+            if (!st.scanComplete) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    // 5c: re-race a known track — pre-load its ring and skip the mapping lap (cars still
+                    // localize + stage on the first finish crossing). Only offered before the ring is built.
+                    if (cachedTrack != null && !mapped)
+                        PrimaryButton("Use last track (${cachedTrack.ring.size}pc)",
+                            { engine.useCachedTrack(cachedTrack.ring) }, accent = ButtonAccent.Blue)
+                    PrimaryButton("Skip scan → Countdown", { engine.stop(); nav.go(Routes.Countdown) }, accent = ButtonAccent.Outline)
+                }
+            } else Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                // 2.6 autoConfirmTrack=false: the player confirms the map (or re-scans) before racing.
+                if (mapped) {
+                    PrimaryButton("Confirm & Race",
+                        { TrackCache.save(ctx, st.discoveredTrack); nav.go(Routes.Countdown) }, accent = ButtonAccent.Gold)
+                    PrimaryButton("Re-scan", { engine.startScan() }, accent = ButtonAccent.Outline)
+                } else {
+                    PrimaryButton("Re-scan", { engine.startScan() }, accent = ButtonAccent.Gold)
+                    PrimaryButton("Race anyway", { nav.go(Routes.Countdown) }, accent = ButtonAccent.Outline)
+                }
             }
         }
     }

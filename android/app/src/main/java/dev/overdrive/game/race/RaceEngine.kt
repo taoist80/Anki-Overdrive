@@ -49,6 +49,7 @@ data class RaceState(
     val finished: Boolean = false,       // the race has ended (a car reached lapTarget)
     val playerConnected: Boolean = true, // false when the player's car has dropped its BLE link (reconnecting)
     val discoveredTrack: List<Int> = emptyList(),  // ordered piece ids mapped so far (drives the scan-screen track view)
+    val trackMapped: Boolean = false,    // the RoadNetwork ring closed into a clean loop (vs. just a lap driven, no closure)
 ) {
     /** Standings: most laps, then most segment transitions (track-progress tiebreaker). */
     val standings: List<CarTelemetry>
@@ -209,6 +210,21 @@ class RaceEngine(private val mgr: CarManager) {
         Log.i(TAG, "Track scan: mapping with ${tele.size} cars @ $SCAN_SPEED mm/s")
         publish(running = false)
         main.removeCallbacks(control); main.post(control)
+    }
+
+    /**
+     * Pre-load a previously-confirmed track ring instead of mapping one (Phase 5c / 4.0.4 "USE TRACK").
+     * Cars keep driving the scan lap to localize, but the planner is ready at once and — because the
+     * staging gate is satisfied as soon as `roadNetwork.ready` — each car stages on its first finish
+     * crossing rather than its second. Returns false if the ring is implausible (falls back to mapping).
+     */
+    fun useCachedTrack(ring: List<Int>): Boolean {
+        if (!scanning) return false
+        if (!roadNetwork.setRingFromLap(ring)) return false
+        discoveredTrack = roadNetwork.pieceIds()
+        Log.i(TAG, "Race.scan: using cached track — ${roadNetwork.size} pieces [${discoveredTrack.joinToString(",")}]")
+        publish(running = false)
+        return true
     }
 
     private fun finishScan(timedOut: Boolean) {
@@ -576,7 +592,7 @@ class RaceEngine(private val mgr: CarManager) {
             if (cc != null) t.copy(health = cc.health, energy = cc.energy, disabled = cc.disabled) else t
         }
         val connected = playerAddr?.let { pa -> mgr.connectedCars().any { it.address == pa } } ?: true
-        state = RaceState(mode, running, elapsed(), cars, combat.playerHud(playerAddr), scanning, scanComplete, lapTarget, finished, connected, discoveredTrack)
+        state = RaceState(mode, running, elapsed(), cars, combat.playerHud(playerAddr), scanning, scanComplete, lapTarget, finished, connected, discoveredTrack, roadNetwork.ready)
     }
 }
 
