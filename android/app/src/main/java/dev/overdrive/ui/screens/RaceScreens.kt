@@ -20,6 +20,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.zIndex
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items as lazyItems
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -173,6 +175,7 @@ fun MatchSetupScreen(nav: OverdriveNav, mode: String, campaignMissionId: String)
     remember { GameData.load(ctx); 0 }
     var playerAddr by remember { mutableStateOf<String?>(null) }
     var lapCount by remember { mutableStateOf(3) }
+    var chosenRivalId by remember { mutableStateOf<String?>(null) }   // Open Play: the AI commander to race (null = generic)
 
     val connected = mgr.cars.filter { it.state != CarState.Disconnected }
     val effectivePlayer = playerAddr ?: connected.firstOrNull()?.address
@@ -238,6 +241,18 @@ fun MatchSetupScreen(nav: OverdriveNav, mode: String, campaignMissionId: String)
                 }
             }
 
+            // Open Play: choose an AI commander to race (campaign sets the opponent from the mission).
+            if (campaignMissionId.isBlank()) {
+                val pickRoster = remember { Rivals.roster().distinctBy { it.displayName } }
+                Text("OPPONENT", fontFamily = font, color = colors.textDim, fontSize = 11.sp, letterSpacing = 1.5.sp)
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(vertical = 2.dp)) {
+                    item { OpponentChip("Generic", null, chosenRivalId == null) { chosenRivalId = null } }
+                    lazyItems(pickRoster, key = { it.commanderId ?: it.displayName ?: "" }) { rp ->
+                        OpponentChip(rp.displayName ?: "?", ContentRepository.commander26(rp.commanderId)?.portraitAsset,
+                            chosenRivalId == rp.commanderId) { chosenRivalId = rp.commanderId }
+                    }
+                }
+            }
             // Laps-to-finish stepper (mirrors 4.0.4's LAP COUNT)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 Text("LAPS TO FINISH", fontFamily = font, color = colors.textDim, fontSize = 12.sp, letterSpacing = 1.sp)
@@ -254,8 +269,8 @@ fun MatchSetupScreen(nav: OverdriveNav, mode: String, campaignMissionId: String)
                     // Tournament: the mission's opponent commander leads the AI rival field; other
                     // commanders fill any extra cars. Each is driven per its real vehicle_setup profile
                     // (purerace/race/battle × aggressive/defensive × tier). Open Play (no mission) = generic.
-                    val primaryRivalId = campaignMissionId.takeIf { it.isNotBlank() }
-                        ?.let { ContentRepository.missionsById[it]?.opponent }
+                    val primaryRivalId = (campaignMissionId.takeIf { it.isNotBlank() }
+                        ?.let { ContentRepository.missionsById[it]?.opponent }) ?: chosenRivalId
                     engine.setRivals(if (primaryRivalId != null) Rivals.field(primaryRivalId, mgr.maxCars - 1) else emptyList())
                     engine.arm(mode)
                     nav.go(Routes.TrackScan)
@@ -270,6 +285,28 @@ fun MatchSetupScreen(nav: OverdriveNav, mode: String, campaignMissionId: String)
 
 /** Which roster slot a car occupies — drives its card's accent, dot, and tap behaviour. */
 private enum class Slot { PLAYER, CONNECTED, NEARBY, OFFLINE }
+
+/** An AI-commander choice in the Open Play opponent picker: portrait + name, gold when selected. */
+@Composable
+private fun OpponentChip(name: String, portrait: String?, selected: Boolean, onClick: () -> Unit) {
+    val colors = OverdriveTheme.colors
+    val font = OverdriveTheme.font
+    val shape = RoundedCornerShape(8.dp)
+    val img = rememberAsset(portrait)
+    Column(
+        Modifier.width(64.dp).clip(shape)
+            .background(if (selected) colors.gold.copy(alpha = 0.18f) else Color(0x14FFFFFF))
+            .border(1.dp, if (selected) colors.gold else colors.panelBorder, shape)
+            .clickable(onClick = onClick).padding(6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        if (img != null) Image(img, name, Modifier.size(40.dp).clip(CircleShape), contentScale = ContentScale.Crop)
+        else Box(Modifier.size(40.dp).clip(CircleShape).background(colors.panelBorder))
+        Spacer(Modifier.height(4.dp))
+        Text(name.uppercase(), fontFamily = font, color = if (selected) colors.gold else colors.textDim,
+            fontSize = 8.sp, letterSpacing = 0.3.sp, maxLines = 1)
+    }
+}
 
 /** One catalog car in a class column: resolves its live connection/found state → slot + tap behaviour. */
 @Composable
