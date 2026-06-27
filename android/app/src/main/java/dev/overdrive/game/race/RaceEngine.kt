@@ -135,6 +135,10 @@ class RaceEngine(private val mgr: CarManager) {
     private var winnerAddr: String? = null   // the car that actually reached the lap target first (authoritative)
     private var rivals: List<DriverProfile> = emptyList()        // AI commander rivals, in assignment order (primary first)
     private val aiProfiles = HashMap<String, DriverProfile>()    // per-AI-car profile (assigned in arm)
+    // ---- Multiplayer (Phase 12): cars driven by a remote human over the network instead of the AI ----
+    var hostPlayerId: Int = -1; private set                     // this host's room playerId (-1 = not an MP race)
+    private var remotePlayerOrder: List<Int> = emptyList()       // remote players start() maps onto non-player cars, in order
+    private val remoteCars = HashMap<String, Int>()              // car address -> controlling remote gamePlayerId
     /** The Tournament mission this race belongs to ("" = Open Play); carried to the results screen. */
     var campaignMissionId: String = ""
     /** The Tournament-ladder rung (0-based) this race is, or -1 if not a ladder match; carried to results. */
@@ -160,6 +164,30 @@ class RaceEngine(private val mgr: CarManager) {
      * generic rival. Drives the "full field of named commanders" (Open Play picker / Tournament ladder).
      */
     fun setRivals(profiles: List<DriverProfile>) { rivals = profiles }
+
+    /** MP host: declare the room host id + the remote players that [start] maps onto the non-player cars. */
+    fun setRemotePlayers(hostId: Int, remoteIds: List<Int>) { hostPlayerId = hostId; remotePlayerOrder = remoteIds }
+
+    /** Room playerId controlling [addr]'s car: a remote human, the local host player, or -1 (AI / unmapped). */
+    fun playerIdOf(addr: String): Int = remoteCars[addr] ?: if (addr == playerAddr) hostPlayerId else -1
+
+    /**
+     * Apply a remote human's control to their assigned car (host-side; main thread). Throttle → target speed
+     * (curve cap still applies); [laneMm] = absolute lane offset; [fireBay] fires that bay. No-op if the
+     * player isn't mapped to a car or the car is disabled.
+     */
+    fun applyRemoteControl(playerId: Int, throttle: Float, laneMm: Int?, fireBay: String?) {
+        val addr = remoteCars.entries.firstOrNull { it.value == playerId }?.key ?: return
+        if (combat.isDisabled(addr)) return
+        targetSpeed[addr] = (throttle.coerceIn(0f, 1f) * MAX_SPEED).toInt()
+        if (laneMm != null && !combat.steerBlocked(addr)) {
+            val off = laneMm.toFloat().coerceIn(-LANE_LIMIT, LANE_LIMIT)
+            tele[addr]?.let { tele[addr] = it.copy(targetOffsetMm = off) }
+            mgr.changeLane(addr, off, hSpeed = LANE_H_SPEED, hAccel = ACCEL)
+        }
+        fireBay?.let { combat.holdTick(addr, bayOf(it), 0.4f); combat.release(addr, bayOf(it), tele.values) }
+    }
+
     val combat = Combat()
 
     init {
@@ -265,18 +293,32 @@ class RaceEngine(private val mgr: CarManager) {
         planModes.clear(); battleAi.clear(); aiTopSpeed.clear()
         // RACE and TIME TRIAL are weapon-free; all other modes (battle/battle-race/one-shot/koth/takeover) arm weapons.
         val weaponsEnabled = state.mode.lowercase().let { it != "race" && !it.startsWith("time") }
+        // Map remote human players (MP) onto the non-player cars; consumed here so a later single-player
+        // race never sees a stale mapping. Remote cars are driven by applyRemoteControl, not the AI planner.
+        remoteCars.clear()
+        if (remotePlayerOrder.isNotEmpty()) {
+            tele.keys.filter { it != playerAddr }.forEachIndexed { i, addr ->
+                remotePlayerOrder.getOrNull(i)?.let { remoteCars[addr] = it }
+            }
+            Log.i(TAG, "Race.start: remote drivers $remoteCars")
+            remotePlayerOrder = emptyList()
+        }
         var aiIdx = 0
         tele.keys.forEach { addr ->
-            targetSpeed[addr] = if (addr == playerAddr) PLAYER_START else {
-                // AI top speed scaled by the car's commander profile (tier/level), plus a small spread. The
-                // planner picks each AI's actual speed/lane per tick up to this ceiling; assign its plan mode
-                // (racing / lane / battle) from the commander profile — battle only when weapons are armed.
-                val profile = aiProfiles[addr] ?: DriverProfile.DEFAULT
-                val top = (AI_BASE * profile.speedScale).toInt() + (aiIdx++ % 4) * AI_SPREAD
-                aiTopSpeed[addr] = top
-                planModes[addr] = PlanMode.forProfile(profile, weaponsEnabled)
-                if (PlanMode.isCombatant(profile, weaponsEnabled)) battleAi.add(addr)   // FSM drives its mode each tick
-                top
+            targetSpeed[addr] = when {
+                addr == playerAddr -> PLAYER_START
+                addr in remoteCars -> 0   // a remote human drives this car via applyRemoteControl
+                else -> {
+                    // AI top speed scaled by the car's commander profile (tier/level), plus a small spread. The
+                    // planner picks each AI's actual speed/lane per tick up to this ceiling; assign its plan mode
+                    // (racing / lane / battle) from the commander profile — battle only when weapons are armed.
+                    val profile = aiProfiles[addr] ?: DriverProfile.DEFAULT
+                    val top = (AI_BASE * profile.speedScale).toInt() + (aiIdx++ % 4) * AI_SPREAD
+                    aiTopSpeed[addr] = top
+                    planModes[addr] = PlanMode.forProfile(profile, weaponsEnabled)
+                    if (PlanMode.isCombatant(profile, weaponsEnabled)) battleAi.add(addr)   // FSM drives its mode each tick
+                    top
+                }
             }
             lastPiece[addr] = -1; lapStartSeg[addr] = 0   // count race laps fresh from the staged start line
             mgr.setLaneOffset(addr, 0f)
@@ -399,7 +441,7 @@ class RaceEngine(private val mgr: CarManager) {
     private fun planAiCars() {
         val cars = tele.values.toList()
         tele.keys.forEach { addr ->
-            if (addr == playerAddr) return@forEach
+            if (addr == playerAddr || addr in remoteCars) return@forEach   // remote-driven cars skip the AI
             val t = tele[addr] ?: return@forEach
             if (t.offTrack || combat.isDisabled(addr)) return@forEach
             // Combat FSM (Phase 3 inc2): re-pick an armed AI's battle goal each tick from the live situation

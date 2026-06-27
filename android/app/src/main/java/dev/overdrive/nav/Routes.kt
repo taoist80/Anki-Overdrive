@@ -91,6 +91,7 @@ object Routes {
     @Serializable object Multiplayer    // hub: host or join (sb_Join_ViewController equivalent)
     @Serializable object MpJoin         // host-discovery list + code entry (ClientWait_VC_OD equivalent)
     @Serializable object MpLobby        // shared host/client lobby (OpenPlayHostLobby / MultiPlayerClientLobby)
+    @Serializable object MpRemoteHud    // client's remote driving + HUD during a multiplayer race
 
     // ---- Top-level singletons ----
     @Serializable object CoinShop

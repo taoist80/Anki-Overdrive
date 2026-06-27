@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -20,6 +21,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -37,11 +40,14 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.overdrive.data.ContentRepository
+import dev.overdrive.game.race.MpHost
 import dev.overdrive.nav.OverdriveNav
 import dev.overdrive.nav.Routes
 import dev.overdrive.net.Mp
+import dev.overdrive.net.MpCarState
 import dev.overdrive.net.MpLobby
 import dev.overdrive.net.MpPlayer
+import dev.overdrive.net.MpStanding
 import dev.overdrive.net.RoomClient
 import dev.overdrive.profile.ProfileRepository
 import dev.overdrive.ui.components.ButtonAccent
@@ -179,6 +185,11 @@ fun MpLobbyScreen(nav: OverdriveNav) {
     LaunchedEffect(lobby) { if (lobby == null && !leaving) nav.back() }
     if (lobby == null) return
 
+    // client: once the host starts, drop into the remote driving HUD (the host enters the race flow directly)
+    LaunchedEffect(lobby.state, host) {
+        if (!host && (lobby.state == "Countdown" || lobby.state == "Running")) nav.go(Routes.MpRemoteHud)
+    }
+
     val onBack: () -> Unit = { leaving = true; RoomClient.leaveRoom(); nav.back() }
 
     OverdriveScaffold(title = "Lobby", onBack = onBack) { mod ->
@@ -222,7 +233,13 @@ fun MpLobbyScreen(nav: OverdriveNav) {
                 Spacer(Modifier.height(8.dp))
                 YourCarPicker(you)
                 Spacer(Modifier.height(18.dp))
-                ReadyAndStart(lobby, you, host)
+                ReadyAndStart(lobby, you, host) {
+                    // host: configure the engine for MP, tell the room, then enter the normal race flow
+                    // (MatchSetup connects the cars → scan → countdown → HUD). beginHostRace persists across it.
+                    MpHost.beginHostRace(lobby)
+                    RoomClient.startGame()
+                    nav.go(Routes.MatchSetup(mode = Mp.engineMode(lobby.mode)))
+                }
             } else {
                 Spacer(Modifier.height(24.dp))
                 StartingPlaceholder(host)
@@ -235,7 +252,7 @@ fun MpLobbyScreen(nav: OverdriveNav) {
 // ---- pieces ----------------------------------------------------------------------------------
 
 @Composable
-private fun ReadyAndStart(lobby: MpLobby, you: MpPlayer?, host: Boolean) {
+private fun ReadyAndStart(lobby: MpLobby, you: MpPlayer?, host: Boolean, onStart: () -> Unit) {
     val ready = you?.ready == true
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         PrimaryButton(
@@ -247,7 +264,7 @@ private fun ReadyAndStart(lobby: MpLobby, you: MpPlayer?, host: Boolean) {
         if (host) {
             PrimaryButton(
                 "Start race",
-                { RoomClient.startGame() },
+                onStart,
                 accent = ButtonAccent.Gold,
                 enabled = lobby.allReady,
                 modifier = Modifier.weight(1f),
@@ -508,4 +525,213 @@ private fun SectionLabel(text: String) {
         text, fontFamily = OverdriveTheme.font, color = OverdriveTheme.colors.textDim,
         fontSize = 12.sp, letterSpacing = 2.sp, fontWeight = FontWeight.Bold,
     )
+}
+
+// =============================================================================================
+// Client remote driving HUD — the non-host player drives their assigned car over Wi-Fi and watches
+// the authoritative race state the host broadcasts. (Phase 3.)
+// =============================================================================================
+
+@Composable
+fun MpRemoteHudScreen(nav: OverdriveNav) {
+    val ctx = LocalContext.current
+    remember { ContentRepository.load(ctx); 0 }
+    val lobby = RoomClient.lobby
+    val you = RoomClient.you
+    val cars = RoomClient.raceState
+    val results = RoomClient.results
+    val state = lobby?.state ?: "Lobby"
+    val running = state == "Running"
+    val weapons = lobby != null && lobby.mode != Mp.MODE_RACE
+
+    // host returned to lobby (rematch / cancel) or room closed → go back to the lobby screen
+    LaunchedEffect(lobby == null, state) { if (lobby == null || state == "Lobby") nav.back() }
+
+    var throttle by remember { mutableStateOf(0f) }
+    var laneMm by remember { mutableStateOf(0) }
+
+    // stream the latest control to the host while racing, so it always has fresh throttle/lane
+    LaunchedEffect(running) {
+        while (running) { RoomClient.sendControl(throttle, laneMm, null); kotlinx.coroutines.delay(150) }
+    }
+
+    Box(Modifier.fillMaxSize()) {
+        OverdriveScaffold(title = "Multiplayer Race", onBack = { RoomClient.leaveRoom(); nav.back() }) { mod ->
+            Column(mod) {
+                val me = cars.firstOrNull { it.gamePlayerId == you?.gamePlayerId }
+                RaceStatusBar(state, me, cars.size, lobby?.valueToReach ?: 0)
+                Spacer(Modifier.height(14.dp))
+                SectionLabel("FIELD")
+                Spacer(Modifier.height(8.dp))
+                if (cars.isEmpty()) {
+                    Text(
+                        "Waiting for the host to start the race…", fontFamily = OverdriveTheme.font,
+                        color = OverdriveTheme.colors.textDim, fontSize = 13.sp,
+                    )
+                } else cars.forEach { c ->
+                    RaceCarRow(c, isYou = c.gamePlayerId == you?.gamePlayerId, lobby = lobby)
+                    Spacer(Modifier.height(6.dp))
+                }
+                Spacer(Modifier.weight(1f))
+                RemoteControls(
+                    enabled = running, throttle = throttle, laneMm = laneMm, weapons = weapons,
+                    onThrottle = { throttle = it; RoomClient.sendControl(it, laneMm, null) },
+                    onLane = { d ->
+                        laneMm = when (d) {
+                            -1 -> (laneMm - 44).coerceAtLeast(-68)
+                            1 -> (laneMm + 44).coerceAtMost(68)
+                            else -> 0
+                        }
+                        RoomClient.sendControl(throttle, laneMm, null)
+                    },
+                    onFire = { RoomClient.sendControl(throttle, laneMm, "attack") },
+                )
+            }
+        }
+        if (results != null) ResultsOverlay(results, you) { RoomClient.leaveRoom(); nav.back() }
+    }
+}
+
+@Composable
+private fun RaceStatusBar(state: String, me: MpCarState?, fieldSize: Int, lapTarget: Int) {
+    val colors = OverdriveTheme.colors
+    val font = OverdriveTheme.font
+    val (title, tint) = when (state) {
+        "Countdown" -> "GET READY" to colors.gold
+        "Running" -> (me?.let { "P${it.place} / $fieldSize" } ?: "RACING") to colors.blue
+        "Results" -> "FINISHED" to colors.success
+        else -> "WAITING" to colors.textDim
+    }
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(title, fontFamily = font, color = tint, fontSize = 26.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
+            if (state == "Running" && me != null) {
+                Text(
+                    "LAP ${me.lap + 1}" + (if (lapTarget > 0) " / $lapTarget" else ""),
+                    fontFamily = font, color = colors.textDim, fontSize = 13.sp,
+                )
+            }
+        }
+        if (me != null) HealthPill(me.health)
+    }
+}
+
+@Composable
+private fun RaceCarRow(c: MpCarState, isYou: Boolean, lobby: MpLobby?) {
+    val colors = OverdriveTheme.colors
+    val font = OverdriveTheme.font
+    val driver = lobby?.players?.firstOrNull { it.gamePlayerId == c.gamePlayerId && !it.emptySlot }?.displayName
+        ?: if (c.gamePlayerId == Mp.NO_PLAYER_ID) "CPU" else "Driver"
+    val carName = ContentRepository.cars.firstOrNull { it.id == c.vehicleId }?.name
+    val accent = if (isYou) colors.blue else colors.panelBorder
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(colors.panel.copy(alpha = 0.8f))
+            .border(1.dp, accent, RoundedCornerShape(10.dp)).padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("P${c.place}", fontFamily = font, color = colors.gold, fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(36.dp))
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(driver, fontFamily = font, color = colors.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                if (isYou) Badge("YOU", colors.blue)
+                if (c.offTrack) Badge("OFF", colors.danger)
+            }
+            Text("${carName ?: "—"} · LAP ${c.lap}", fontFamily = font, color = colors.textDim, fontSize = 11.sp)
+        }
+        HealthBar(c.health, Modifier.width(64.dp))
+    }
+}
+
+@Composable
+private fun HealthBar(health: Int, modifier: Modifier = Modifier) {
+    val colors = OverdriveTheme.colors
+    val frac = health.coerceIn(0, 100) / 100f
+    val tint = if (health > 50) colors.success else if (health > 20) colors.gold else colors.danger
+    Box(modifier.height(8.dp).clip(RoundedCornerShape(4.dp)).background(colors.barEmpty)) {
+        Box(Modifier.fillMaxWidth(frac).height(8.dp).clip(RoundedCornerShape(4.dp)).background(tint))
+    }
+}
+
+@Composable
+private fun HealthPill(health: Int) {
+    val colors = OverdriveTheme.colors
+    val font = OverdriveTheme.font
+    Column(horizontalAlignment = Alignment.End) {
+        Text("ARMOR", fontFamily = font, color = colors.textDim, fontSize = 10.sp, letterSpacing = 1.sp)
+        Text("$health", fontFamily = font, color = if (health > 50) colors.success else colors.danger, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun RemoteControls(
+    enabled: Boolean, throttle: Float, laneMm: Int, weapons: Boolean,
+    onThrottle: (Float) -> Unit, onLane: (Int) -> Unit, onFire: () -> Unit,
+) {
+    val colors = OverdriveTheme.colors
+    val font = OverdriveTheme.font
+    OverdrivePanel(Modifier.fillMaxWidth()) { pm ->
+        Column(pm, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                SectionLabel("THROTTLE")
+                Spacer(Modifier.weight(1f))
+                Text("${(throttle * 100).toInt()}%", fontFamily = font, color = colors.blue, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            }
+            Slider(
+                value = throttle, onValueChange = onThrottle, enabled = enabled, valueRange = 0f..1f,
+                colors = SliderDefaults.colors(thumbColor = colors.blue, activeTrackColor = colors.blue, inactiveTrackColor = colors.panelBorder),
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                LaneBtn("◀ LEFT", enabled && laneMm > -68, Modifier.weight(1f)) { onLane(-1) }
+                LaneBtn("CENTER", enabled && laneMm != 0, Modifier.weight(1f)) { onLane(0) }
+                LaneBtn("RIGHT ▶", enabled && laneMm < 68, Modifier.weight(1f)) { onLane(1) }
+            }
+            if (weapons) PrimaryButton("Fire", onFire, accent = ButtonAccent.Orange, enabled = enabled, modifier = Modifier.fillMaxWidth())
+        }
+    }
+}
+
+@Composable
+private fun LaneBtn(label: String, enabled: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    val colors = OverdriveTheme.colors
+    val font = OverdriveTheme.font
+    Box(
+        modifier.clip(RoundedCornerShape(9.dp)).background(Color(0x1FFFFFFF))
+            .border(1.dp, colors.panelBorder, RoundedCornerShape(9.dp))
+            .clickable(enabled = enabled, onClick = onClick).padding(vertical = 14.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(label, fontFamily = font, color = if (enabled) colors.textPrimary else colors.textDim, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun ResultsOverlay(standings: List<MpStanding>, you: MpPlayer?, onLeave: () -> Unit) {
+    val colors = OverdriveTheme.colors
+    val font = OverdriveTheme.font
+    val mine = standings.firstOrNull { it.gamePlayerId == you?.gamePlayerId }
+    Box(Modifier.fillMaxSize().background(Color(0xE6090512)), contentAlignment = Alignment.Center) {
+        Column(Modifier.widthIn(max = 460.dp).padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            RacingName(if (mine?.place == 1) "You Win" else "Race Over", fontSize = 38, hlColor = if (mine?.place == 1) colors.gold else colors.blue)
+            if (mine != null) {
+                Spacer(Modifier.height(6.dp))
+                Text("You finished P${mine.place}", fontFamily = font, color = colors.textDim, fontSize = 14.sp)
+            }
+            Spacer(Modifier.height(18.dp))
+            standings.sortedBy { it.place }.forEach { s ->
+                val meRow = s.gamePlayerId == you?.gamePlayerId
+                Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("P${s.place}", fontFamily = font, color = colors.gold, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(40.dp))
+                    Text(
+                        s.displayName.ifBlank { if (s.gamePlayerId == Mp.NO_PLAYER_ID) "CPU" else "Driver" },
+                        fontFamily = font, color = if (meRow) colors.blue else colors.textPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f),
+                    )
+                    Text("${s.laps} laps", fontFamily = font, color = colors.textDim, fontSize = 13.sp)
+                }
+            }
+            Spacer(Modifier.height(22.dp))
+            Text("Waiting for the host to restart, or leave.", fontFamily = font, color = colors.textDim, fontSize = 12.sp)
+            Spacer(Modifier.height(12.dp))
+            PrimaryButton("Leave", onLeave, accent = ButtonAccent.Outline)
+        }
+    }
 }

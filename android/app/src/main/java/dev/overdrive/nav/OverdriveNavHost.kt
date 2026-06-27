@@ -48,6 +48,7 @@ import dev.overdrive.ui.screens.MissionSelectScreen
 import dev.overdrive.ui.screens.MultiplayerScreen
 import dev.overdrive.ui.screens.MpJoinScreen
 import dev.overdrive.ui.screens.MpLobbyScreen
+import dev.overdrive.ui.screens.MpRemoteHudScreen
 import dev.overdrive.ui.screens.NotificationPromptScreen
 import dev.overdrive.ui.screens.PlayerSelectScreen
 import dev.overdrive.ui.screens.ProfileHomeScreen
@@ -184,6 +185,7 @@ fun OverdriveNavHost(nav: OverdriveNav) {
         composable<Routes.Multiplayer> { MultiplayerScreen(nav) }
         composable<Routes.MpJoin> { MpJoinScreen(nav) }
         composable<Routes.MpLobby> { MpLobbyScreen(nav) }
+        composable<Routes.MpRemoteHud> { MpRemoteHudScreen(nav) }
 
         // ---- Top-level singletons ----
         composable<Routes.CoinShop> { CoinShopScreen(nav) }

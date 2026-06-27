@@ -50,6 +50,7 @@ object RoomClient {
     var rooms by mutableStateOf<List<MpRoomSummary>>(emptyList()); private set
     var lastError by mutableStateOf<String?>(null); private set
     var raceState by mutableStateOf<List<MpCarState>>(emptyList()); private set
+    var results by mutableStateOf<List<MpStanding>?>(null); private set    // final standings (client end-of-race)
 
     val isHost: Boolean get() = you?.isHost == true
     val inRoom: Boolean get() = lobby != null
@@ -78,7 +79,7 @@ object RoomClient {
 
     fun disconnect() {
         ws?.close(1000, "bye"); ws = null
-        onMain { conn = Conn.Disconnected; lobby = null; you = null; rooms = emptyList(); raceState = emptyList() }
+        onMain { conn = Conn.Disconnected; lobby = null; you = null; rooms = emptyList(); raceState = emptyList(); results = null }
     }
 
     /** Leave the current room but keep the socket open (e.g. lobby → join screen). */
@@ -148,6 +149,7 @@ object RoomClient {
             "gameLobbyStateUpdate" -> onMain {
                 val s = obj["state"]?.jsonPrimitive?.contentOrNull
                 lobby = lobby?.let { if (s != null) it.copy(state = s) else it }
+                if (s == "Lobby") { results = null; raceState = emptyList() }   // returned to lobby (rematch)
             }
             "roomList" -> onMain {
                 rooms = obj["rooms"]?.let { json.decodeFromJsonElement(ListSerializer(MpRoomSummary.serializer()), it) } ?: emptyList()
@@ -160,7 +162,7 @@ object RoomClient {
             }
             "results" -> {
                 val st = obj["standings"]?.let { json.decodeFromJsonElement(ListSerializer(MpStanding.serializer()), it) } ?: emptyList()
-                onMain { onResults?.invoke(st) }
+                onMain { results = st; onResults?.invoke(st) }
             }
             "playerDisconnected" -> { val pid = obj["playerId"]?.jsonPrimitive?.intOrNull ?: return; onMain { onPlayerDisconnected?.invoke(pid) } }
             "roomClosed" -> { val r = obj["reason"]?.jsonPrimitive?.contentOrNull ?: "room closed"; onMain { lobby = null; you = null; onRoomClosed?.invoke(r) } }

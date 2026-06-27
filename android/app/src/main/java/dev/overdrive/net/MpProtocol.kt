@@ -21,6 +21,13 @@ object Mp {
         MODE_KOTH -> "King of the Hill"
         else -> "Race"
     }
+
+    /** Lobby mode int → RaceEngine mode string (drives weapon-enable + the Match Setup label). */
+    fun engineMode(mode: Int) = when (mode) {
+        MODE_BATTLE -> "battle"
+        MODE_KOTH -> "koth"
+        else -> "race"
+    }
 }
 
 /** One lobby slot. Faithful to 3.4.0 GamePlayerData; `connectionType` keeps the BLE/Wifi distinction. */
